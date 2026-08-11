@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bridge-common-config
+  namespace: smartgrid
+data:
+  PDC_PORT: "8900"
+  PDC_CHANNEL: "SetActivePowerEquals"
+  OPENEMS_BASE: "http://openems.smartgrid.svc.cluster.local:8084"
+  OPENEMS_USER: "admin"
+  OPENEMS_PASS: "admin"
+  PUBLISH_INTERVAL_S: "1.0"
+  RECV_TIMEOUT_S: "5.0"
+  CONNECT_RETRY_S: "10.0"
+  STALE_DATA_S: "10.0"
+  STATUS_INTERVAL_S: "30.0"
+  STARTUP_DELAY_S: "15.0"
+  HTTP_PORT: "8000"
+  IDCODE: "235"
+  EXPECTED_DATA_IDCODE: "235"
+  EXPECTED_DATA_FRAMESIZE: "68"
+  PHASOR_COUNT: "5"
+  PUBLISH_PHASOR_INDEX: "1"
+  PHASOR1_LABEL: "PHASOR_1"
+  PHASOR2_LABEL: "PHASOR_2"
+  PHASOR3_LABEL: "PHASOR_3"
+  PHASOR4_LABEL: "PHASOR_4"
+  PHASOR5_LABEL: "PHASOR_5"
+  P_EQ_SCALE: "0.001"
+  USE_SYNTHETIC_DATA: "false"
+  ALLOW_SYNTHETIC_FALLBACK: "true"
+  LOG_LEVEL: "INFO"

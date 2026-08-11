@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: openems-ui-backend
+  namespace: smartgrid
+spec:
+  selector:
+    app: openems-ui-backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+  type: ClusterIP

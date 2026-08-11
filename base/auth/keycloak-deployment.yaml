@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: smartgrid
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.2
+
+          args:
+            - start-dev
+            - --import-realm
+            - --http-relative-path=/auth
+            - --http-enabled=true
+            - --proxy-headers=xforwarded
+
+          env:
+            - name: KC_DB
+              value: postgres
+
+            - name: KC_DB_URL
+              value: jdbc:postgresql://keycloak-db.smartgrid.svc.cluster.local:5432/keycloak
+
+            - name: KC_DB_USERNAME
+              value: keycloak
+
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: KEYCLOAK_DB_PASSWORD
+
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+
+            - name: KC_METRICS_ENABLED
+              value: "true"
+
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: admin
+
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: KEYCLOAK_ADMIN_PASSWORD
+
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          volumeMounts:
+            - name: keycloak-realm-import
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "384Mi"
+            limits:
+              cpu: "750m"
+              memory: "768Mi"
+
+          startupProbe:
+            tcpSocket:
+              port: 8080
+            failureThreshold: 72
+            periodSeconds: 5
+
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 12
+
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 180
+            periodSeconds: 20
+            failureThreshold: 6
+
+      volumes:
+        - name: keycloak-realm-import
+          configMap:
+            name: keycloak-realm-import

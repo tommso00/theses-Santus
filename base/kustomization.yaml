@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: smartgrid
+
+resources:
+  - namespace.yaml
+  - auth/
+  - openems/
+  - apps/openems-backend/
+  - apps/openems-ui/
+  - apps/openems-ui-backend/
+  - apps/odoo-db/
+  - apps/odoo/
+  - apps/pdc-edge/
+  - apps/pdc-edge-2/
+  - apps/pdc-edge-3/
+  - apps/bridges/
+  - apps/bridge-1/
+  - apps/bridge-2/
+  - apps/bridge-3/

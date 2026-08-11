@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: webproxy
+  namespace: smartgrid
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: smartgrid.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: webproxy
+                port:
+                  number: 80

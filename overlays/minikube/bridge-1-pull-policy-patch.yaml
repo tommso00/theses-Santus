@@ -1,0 +1,10 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bridge-1
+spec:
+  template:
+    spec:
+      containers:
+        - name: bridge
+          imagePullPolicy: IfNotPresent

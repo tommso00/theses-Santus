@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openems-ui-backend
+  namespace: smartgrid
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openems-ui-backend
+  template:
+    metadata:
+      labels:
+        app: openems-ui-backend
+    spec:
+      containers:
+        - name: openems-ui-backend
+          image: openems/ui-backend:2025.1.0
+          env:
+            - name: WEBSOCKET_HOST
+              value: smartgrid.local
+            - name: WEBSOCKET_PORT
+              value: "8082"
+            - name: UI_WEBSOCKET
+              value: "ws://smartgrid.local/backend-ws/"
+          ports:
+            - containerPort: 80

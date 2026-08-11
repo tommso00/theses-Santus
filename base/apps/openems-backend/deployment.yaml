@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openems-backend
+  namespace: smartgrid
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: openems-backend
+  template:
+    metadata:
+      labels:
+        app: openems-backend
+    spec:
+      containers:
+        - name: openems-backend
+          image: openems/backend:2025.1.0
+          ports:
+            - containerPort: 8079
+              name: felix
+            - containerPort: 8082
+              name: ws
+            - containerPort: 8093
+              name: api
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: openems-backend-conf
+              mountPath: /var/opt/openems/config
+            - name: openems-backend-data
+              mountPath: /var/opt/openems/data
+          readinessProbe:
+            tcpSocket:
+              port: 8079
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8079
+            initialDelaySeconds: 45
+            periodSeconds: 20
+
+      volumes:
+        - name: openems-backend-conf
+          persistentVolumeClaim:
+            claimName: openems-backend-conf
+        - name: openems-backend-data
+          persistentVolumeClaim:
+            claimName: openems-backend-data

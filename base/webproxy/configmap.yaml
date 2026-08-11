@@ -1,0 +1,196 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webproxy-nginx-conf
+  namespace: smartgrid
+data:
+  nginx.conf: |
+    worker_processes auto;
+
+    events {
+        worker_connections 1024;
+    }
+
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 4096;
+        server_tokens off;
+
+        proxy_buffer_size 32k;
+        proxy_buffers 8 32k;
+
+        map $http_upgrade $connection_upgrade {
+            default upgrade;
+            '' close;
+        }
+
+        upstream openems_edge_jsonrpc { server openems:8084; }
+        upstream openems_edge_ws { server openems:8085; }
+        upstream openems_backend_ws { server openems-backend:8082; }
+        upstream openems_ui { server openems-ui:80; }
+        upstream openems_ui_backend { server openems-ui-backend:80; }
+        upstream bridge_1 { server bridge-1:8000; }
+        upstream bridge_2 { server bridge-2:8000; }
+        upstream bridge_3 { server bridge-3:8000; }
+        upstream odoo_upstream { server odoo:8069; }
+        upstream oauth2_proxy { server oauth2-proxy:4180; }
+        upstream keycloak_upstream { server keycloak:8080; }
+
+        server {
+            listen 80;
+            server_name _;
+            access_log /var/log/nginx/access.log;
+            error_log /var/log/nginx/error.log warn;
+
+            location = /monitor { return 301 /monitor/; }
+            location = /monitor/ {
+                default_type application/json;
+                return 200 '{"service":"webproxy","status":"ok"}';
+            }
+
+            location /monitor/bridges/1/health { proxy_pass http://bridge_1/health; }
+            location /monitor/bridges/1/status { proxy_pass http://bridge_1/status; }
+            location /monitor/bridges/2/health { proxy_pass http://bridge_2/health; }
+            location /monitor/bridges/2/status { proxy_pass http://bridge_2/status; }
+            location /monitor/bridges/3/health { proxy_pass http://bridge_3/health; }
+            location /monitor/bridges/3/status { proxy_pass http://bridge_3/status; }
+
+            location = /oauth2/auth {
+                internal;
+                proxy_pass http://oauth2_proxy;
+                proxy_pass_request_body off;
+                proxy_set_header Content-Length "";
+                proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
+                proxy_set_header X-Forwarded-Uri $request_uri;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header Host $host;
+            }
+
+            location /oauth2/ {
+                proxy_pass http://oauth2-proxy.smartgrid.svc.cluster.local:4180;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Scheme $scheme;
+                
+
+                auth_request_set $auth_cookie $upstream_http_set_cookie;
+                add_header Set-Cookie $auth_cookie;
+                
+
+                auth_request_set $auth_cookie_name_upstream_1 $upstream_cookie__oauth2_proxy_openems_1;
+                auth_request_set $auth_cookie_name_upstream_2 $upstream_cookie__oauth2_proxy_openems_2;
+                
+                if ($auth_cookie ~* "(; .*)") {
+                    set $auth_cookie_name_0 $auth_cookie;
+                    set $auth_cookie_name_1 "_oauth2_proxy_openems_1=$auth_cookie_name_upstream_1$1";
+                    set $auth_cookie_name_2 "_oauth2_proxy_openems_2=$auth_cookie_name_upstream_2$1";
+                }
+                
+
+                if ($auth_cookie_name_upstream_1) {
+                    add_header Set-Cookie $auth_cookie_name_0;
+                    add_header Set-Cookie $auth_cookie_name_1;
+                }
+                if ($auth_cookie_name_upstream_2) {
+                    add_header Set-Cookie $auth_cookie_name_2;
+                }
+                
+
+                proxy_buffer_size 8k;
+                proxy_buffers 4 8k;
+                proxy_busy_buffers_size 16k;
+            }
+
+            location = /auth { return 301 /auth/; }
+            location /auth/ {
+                proxy_pass http://keycloak_upstream/auth/;
+                proxy_set_header Host $http_host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header X-Forwarded-Host $http_host;
+                proxy_set_header X-Forwarded-Port 80;
+                proxy_set_header X-Forwarded-Prefix /auth;
+            }
+
+            location /realms/ { proxy_pass http://keycloak_upstream/auth/realms/; }
+            location /resources/ { proxy_pass http://keycloak_upstream/auth/resources/; }
+            location /js/ { proxy_pass http://keycloak_upstream/auth/js/; }
+
+            location = /edge-jsonrpc {
+                rewrite ^ /jsonrpc break;
+                proxy_pass http://openems_edge_jsonrpc;
+            }
+
+            location = /edge-jsonrpc/ {
+                rewrite ^ /jsonrpc/ break;
+                proxy_pass http://openems_edge_jsonrpc;
+            }
+
+            location = /edge-ws { return 301 /edge-ws/; }
+            location /edge-ws/ {
+                proxy_pass http://openems_edge_ws/;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection $connection_upgrade;
+                proxy_read_timeout 3600s;
+                proxy_send_timeout 3600s;
+            }
+
+            location = /openems-edge { return 301 /openems-edge/; }
+            location /openems-edge/ {
+                proxy_pass http://openems_backend_ws/;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection $connection_upgrade;
+                proxy_read_timeout 3600s;
+                proxy_send_timeout 3600s;
+            }
+
+            location = /backend-ws { return 301 /backend-ws/; }
+            location /backend-ws/ {
+                auth_request /oauth2/auth;
+                error_page 401 =302 /oauth2/sign_in;
+
+                auth_request_set $access_token $upstream_http_x_auth_request_access_token;
+                proxy_set_header Authorization "Bearer $access_token";
+
+                proxy_pass http://openems_backend_ws/;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection $connection_upgrade;
+                proxy_read_timeout 3600s;
+                proxy_send_timeout 3600s;
+            }
+
+            location = /backend-ui { return 301 /backend-ui/; }
+            location /backend-ui/ {
+                auth_request /oauth2/auth;
+                error_page 401 =302 /oauth2/sign_in;
+                proxy_pass http://openems_ui_backend/;
+            }
+
+            location = /odoo { return 301 /odoo/; }
+            location /odoo/ {
+                auth_request /oauth2/auth;
+                error_page 401 =302 /oauth2/sign_in;
+                proxy_pass http://odoo_upstream/;
+                proxy_http_version 1.1;
+                proxy_redirect off;
+                proxy_read_timeout 300s;
+                proxy_send_timeout 300s;
+            }
+
+            location / {
+                proxy_pass http://openems_ui/;
+            }
+        }
+    }

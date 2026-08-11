@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openems
+  namespace: smartgrid
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: openems
+  template:
+    metadata:
+      labels:
+        app: openems
+    spec:
+      containers:
+        - name: openems
+          image: openems/edge:2025.1.0
+          ports:
+            - containerPort: 8080
+            - containerPort: 8084
+            - containerPort: 8085
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "750m"
+              memory: "512Mi"
+          readinessProbe:
+            tcpSocket:
+              port: 8085
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8085
+            initialDelaySeconds: 60
+            periodSeconds: 20

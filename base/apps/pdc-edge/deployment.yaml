@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pdc-edge
+  namespace: smartgrid
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pdc-edge
+  template:
+    metadata:
+      labels:
+        app: pdc-edge
+    spec:
+      containers:
+        - name: pdc-edge
+          image: gridprotectionalliance/openpdc:v2.9.148
+          ports:
+            - containerPort: 8280
+            - containerPort: 8900
+            - containerPort: 6165
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"

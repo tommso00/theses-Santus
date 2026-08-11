@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - secrets.yaml
+  - keycloak-realm-configmap.yaml
+  - keycloak-db-pvc.yaml
+  - keycloak-db-service.yaml
+  - keycloak-db-deployment.yaml
+  - keycloak-service.yaml
+  - keycloak-deployment.yaml
+  - oauth2-proxy-service.yaml
+  - oauth2-proxy-deployment.yaml
+  - webproxy-configmap.yaml
+  - webproxy-service.yaml
+  - webproxy-deployment.yaml
+  - webproxy-ingress.yaml
