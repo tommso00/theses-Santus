@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: openems
   namespace: smartgrid
+  labels:
+    environment: minikube
 spec:
   replicas: 1
   strategy:
@@ -15,9 +17,62 @@ spec:
       labels:
         app: openems
     spec:
+      initContainers:
+        - name: initialize-openems-config
+          image: alpine:3.20
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+
+              mkdir -p \
+                /var/opt/openems/config/Controller/Api/Backend \
+                /var/opt/openems/config/Controller/Api/Websocket \
+                /var/opt/openems/config/Scheduler/AllAlphabetically
+
+              cat > /var/opt/openems/config/Controller/Api/Backend/backend0.config <<'EOF'
+              enabled=B"true"
+              uri="ws://openems-backend:8081"
+              apikey="unique_password_for_edge0"
+              id="ctrlBackend0"
+              service.factoryPid="Controller.Api.Backend"
+              service.pid="Controller.Api.Backend.backend0"
+              EOF
+
+              cat > /var/opt/openems/config/Controller/Api/Websocket/websocket0.config <<'EOF'
+              alias=""
+              apiTimeout=I"60"
+              enabled=B"true"
+              id="ctrlApiWebsocket0"
+              port=I"8085"
+              service.factoryPid="Controller.Api.Websocket"
+              service.pid="Controller.Api.Websocket.websocket0"
+              EOF
+
+              cat > /var/opt/openems/config/Scheduler/AllAlphabetically/scheduler0.config <<'EOF'
+              controllers.ids=[]
+              cycleTime=I"1000"
+              enabled=B"true"
+              id="scheduler0"
+              service.factoryPid="Scheduler.AllAlphabetically"
+              service.pid="Scheduler.AllAlphabetically.scheduler0"
+              EOF
+
+              chown -R 911:911 /var/opt/openems/config/Controller
+              chown -R 911:911 /var/opt/openems/config/Scheduler
+
+              chmod -R u+rwX,go+rX /var/opt/openems/config/Controller
+              chmod -R u+rwX,go+rX /var/opt/openems/config/Scheduler
+          volumeMounts:
+            - name: openems-conf
+              mountPath: /var/opt/openems/config
+
       containers:
         - name: openems
           image: openems/edge:2025.1.0
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
             - containerPort: 8084
@@ -34,8 +89,20 @@ spec:
               port: 8085
             initialDelaySeconds: 30
             periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
           livenessProbe:
             tcpSocket:
               port: 8085
             initialDelaySeconds: 60
             periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+          volumeMounts:
+            - name: openems-conf
+              mountPath: /var/opt/openems/config
+
+      volumes:
+        - name: openems-conf
+          persistentVolumeClaim:
+            claimName: openems-conf

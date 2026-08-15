@@ -49,3 +49,10 @@ spec:
               port: 5432
             initialDelaySeconds: 30
             periodSeconds: 10
+          volumeMounts:
+            - name: keycloak-db-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: keycloak-db-data
+          persistentVolumeClaim:
+            claimName: keycloak-db-data

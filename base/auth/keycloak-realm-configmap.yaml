@@ -48,7 +48,7 @@ data:
           "serviceAccountsEnabled": false,
           "frontchannelLogout": true,
           "fullScopeAllowed": true,
-          "secret": "CHANGE_ME_OPENEMS_GATEWAY_CLIENT_SECRET",
+          "secret": "Hfew7huZeKPbrosuZDM5vgTpfufcCc3e",
           "redirectUris": [
             "http://smartgrid.local/oauth2/callback"
           ],
