@@ -77,6 +77,12 @@ Verificare il nodo:
 kubectl get nodes
 ```
 
+Attivare tunnel:
+
+```powershell
+minikube tunnel
+```
+
 ### 2. Creare o verificare il namespace
 
 Il namespace previsto è:
@@ -148,7 +154,7 @@ ping smartgrid.local
 URL principale:
 
 ```text
-http://smartgrid.local
+http://smartgrid.local/oauth2/sign_in
 ```
 
 Login Keycloak:
@@ -199,8 +205,6 @@ I secret sono definiti in:
 ```text
 k8s/base/auth/secrets.yaml
 ```
-
-Non inserire secret reali in Git o in ConfigMap. Se un secret viene condiviso accidentalmente, deve essere ruotato.
 
 ## Persistenza
 
@@ -258,24 +262,6 @@ kubectl logs -n smartgrid deployment/webproxy --tail=200
 kubectl get events -n smartgrid --sort-by=.lastTimestamp
 ```
 
-### Diagnostica OAuth2 Proxy
-
-Per errori durante il callback:
-
-```powershell
-kubectl logs -n smartgrid deployment/oauth2-proxy --since=10m --timestamps |
-  Select-String -Pattern "callback|redeem|unauthorized|invalid|error|session|redis"
-```
-
-Un errore come:
-
-```text
-unauthorized_client
-Invalid client or Invalid client credentials
-```
-
-indica normalmente un problema nel client secret, nel client ID o nella configurazione del client OIDC.
-
 ### Configurazione realmente applicata
 
 Confrontare sempre i file sorgente con il cluster:
@@ -317,6 +303,7 @@ Per riavviarlo:
 ```powershell
 minikube start
 kubectl get pods -n smartgrid
+minikube tunnel
 ```
 
 Non cancellare il profilo Minikube se si vuole conservare lo storage locale:
@@ -363,23 +350,3 @@ minikube delete
 - Non cancellare il database PostgreSQL o il PVC `keycloak-db-data`.
 - Non ricreare il realm finché non è chiaro il comportamento dell'importazione.
 - Prima di applicare modifiche, confrontare sempre manifest Kustomize e risorse live.
-- Per ogni modifica, annotare data, file modificato, comando eseguito e risultato.
-
-### Registro modifiche
-
-| Data | Componente | Modifica o verifica | Risultato |
-|---|---|---|---|
-| 2026-08-13 | OpenEMS Edge | Configurazione PVC e initContainer | Funzionante |
-| 2026-08-13 | Keycloak | Verifica realm e utente `testuser` | Utente autenticato |
-| 2026-08-13 | OAuth2 Proxy | Analisi errore callback | `unauthorized_client` identificato |
-| 2026-08-13 | Keycloak/OAuth2 Proxy | Allineamento client secret | Da verificare dopo restart |
-| 2026-08-13 | PostgreSQL | Verifica Deployment e PVC | PVC presente ma non montato |
-
-## Regole di sicurezza
-
-- Non committare password, client secret o cookie secret in chiaro.
-- Non condividere output completi di Secret Kubernetes.
-- Usare secret casuali e sufficientemente lunghi.
-- Ruotare i secret dopo un'esposizione accidentale.
-- Limitare gli aggiornamenti al componente interessato.
-- Conservare backup del database prima di modifiche alla persistenza.
