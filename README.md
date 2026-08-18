@@ -350,3 +350,12 @@ minikube delete
 - Non cancellare il database PostgreSQL o il PVC `keycloak-db-data`.
 - Non ricreare il realm finché non è chiaro il comportamento dell'importazione.
 - Prima di applicare modifiche, confrontare sempre manifest Kustomize e risorse live.
+
+
+### Pullare e Buildare i bridge
+
+# Pull dell'immagine pubblica
+docker pull ghcr.io/tommso00/pmu-bridge:latest
+
+# Oppure versione specifica
+docker pull ghcr.io/tommso00/pmu-bridge:v1.0.0

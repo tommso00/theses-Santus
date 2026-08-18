@@ -37,8 +37,8 @@ spec:
               do echo "waiting for pdc-edge"; sleep 3; done
       containers:
         - name: bridge-1
-          image: pmu-bridge:latest
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/tommso00/pmu-bridge:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
               name: http
@@ -101,33 +101,33 @@ spec:
               value: "true"
             - name: LOG_LEVEL
               value: "INFO"
-          startupProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            failureThreshold: 12
-            periodSeconds: 5
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 20
-            periodSeconds: 15
-          readinessProbe:
-            exec:
-              command:
-                - python
-                - -c
-                - |
-                  import json, urllib.request, sys
-                  data = json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2))
-                  sys.exit(0 if data.get("fresh") else 1)
-            initialDelaySeconds: 20
-            periodSeconds: 10
-          resources:
-            requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
-              memory: "256Mi"
-              cpu: "500m"
+      startupProbe:
+        httpGet:
+          path: /health
+          port: 8000
+        failureThreshold: 12
+        periodSeconds: 5
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 8000
+        initialDelaySeconds: 20
+        periodSeconds: 15
+      readinessProbe:
+        exec:
+          command:
+            - python
+            - -c
+            - |
+              import json, urllib.request, sys
+              data = json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2))
+              sys.exit(0 if data.get("fresh") else 1)
+        initialDelaySeconds: 20
+        periodSeconds: 10
+      resources:
+        requests:
+          memory: "128Mi"
+          cpu: "100m"
+        limits:
+          memory: "256Mi"
+          cpu: "500m"
