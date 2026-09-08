@@ -9,6 +9,7 @@ resources:
   - keycloak-db-deployment.yaml
   - keycloak-service.yaml
   - keycloak-deployment.yaml
+  - redis.yaml
   - oauth2-proxy-service.yaml
   - oauth2-proxy-deployment.yaml
   - webproxy-configmap.yaml
