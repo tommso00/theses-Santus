@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: openems-backend
   namespace: smartgrid
+  labels:
+    environment: minikube
 spec:
   replicas: 1
   strategy:
@@ -18,13 +20,17 @@ spec:
       containers:
         - name: openems-backend
           image: openems/backend:2025.1.0
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8079
               name: felix
+              protocol: TCP
             - containerPort: 8082
               name: ws
+              protocol: TCP
             - containerPort: 8093
               name: api
+              protocol: TCP
           resources:
             requests:
               cpu: "100m"
@@ -32,22 +38,28 @@ spec:
             limits:
               cpu: "500m"
               memory: "512Mi"
-          volumeMounts:
-            - name: openems-backend-conf
-              mountPath: /var/opt/openems/config
-            - name: openems-backend-data
-              mountPath: /var/opt/openems/data
           readinessProbe:
             tcpSocket:
               port: 8079
             initialDelaySeconds: 20
             periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
           livenessProbe:
             tcpSocket:
               port: 8079
             initialDelaySeconds: 45
             periodSeconds: 20
-
+            timeoutSeconds: 1
+            failureThreshold: 3
+          volumeMounts:
+            - name: openems-backend-conf
+              mountPath: /var/opt/openems/config
+            - name: openems-backend-data
+              mountPath: /var/opt/openems/data
+            - name: metadata
+              mountPath: /var/opt/openems/config/metadata.json
+              subPath: metadata.json
       volumes:
         - name: openems-backend-conf
           persistentVolumeClaim:
@@ -55,3 +67,9 @@ spec:
         - name: openems-backend-data
           persistentVolumeClaim:
             claimName: openems-backend-data
+        - name: metadata
+          configMap:
+            name: openems-metadata
+            items:
+              - key: metadata.json
+                path: metadata.json

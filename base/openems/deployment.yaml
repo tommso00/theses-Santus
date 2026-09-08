@@ -30,6 +30,7 @@ spec:
               mkdir -p \
                 /var/opt/openems/config/Controller/Api/Backend \
                 /var/opt/openems/config/Controller/Api/Websocket \
+                /var/opt/openems/config/Controller/Api/Rest \
                 /var/opt/openems/config/Scheduler/AllAlphabetically
 
               cat > /var/opt/openems/config/Controller/Api/Backend/backend0.config <<'EOF'
@@ -51,13 +52,15 @@ spec:
               service.pid="Controller.Api.Websocket.websocket0"
               EOF
 
-              cat > /var/opt/openems/config/Scheduler/AllAlphabetically/scheduler0.config <<'EOF'
-              controllers.ids=[]
-              cycleTime=I"1000"
+              cat > /var/opt/openems/config/Controller/Api/Rest/rest0.config <<'EOF'
               enabled=B"true"
-              id="scheduler0"
-              service.factoryPid="Scheduler.AllAlphabetically"
-              service.pid="Scheduler.AllAlphabetically.scheduler0"
+              port=I"8084"
+              service.pid="Controller.Api.Rest"
+              service.factoryPid="Controller.Api.Rest"
+              id="ctrlApiRest0"
+              alias=""
+              apiTimeout=I"60"
+              debugMode=B"false"
               EOF
 
               chown -R 911:911 /var/opt/openems/config/Controller
@@ -68,15 +71,17 @@ spec:
           volumeMounts:
             - name: openems-conf
               mountPath: /var/opt/openems/config
-
       containers:
         - name: openems
-          image: openems/edge:2025.1.0
-          imagePullPolicy: IfNotPresent
+          image: openems/edge:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
+              protocol: TCP
             - containerPort: 8084
+              protocol: TCP
             - containerPort: 8085
+              protocol: TCP
           resources:
             requests:
               cpu: "100m"
@@ -101,7 +106,6 @@ spec:
           volumeMounts:
             - name: openems-conf
               mountPath: /var/opt/openems/config
-
       volumes:
         - name: openems-conf
           persistentVolumeClaim:

@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openems
+  namespace: smartgrid
+spec:
+  template:
+    spec:
+      containers:
+      - name: openems
+        volumeMounts:
+        - mountPath: /var/opt/openems/config
+          name: openems-conf
+      initContainers:
+      - name: initialize-openems-config
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+
+          mkdir -p \
+            /var/opt/openems/config/Controller/Api/Backend \
+            /var/opt/openems/config/Controller/Api/Websocket \
+            /var/opt/openems/config/Controller/Api/Rest \
+            /var/opt/openems/config/Scheduler/AllAlphabetically
+
+          cat > /var/opt/openems/config/Controller/Api/Backend/backend0.config <<'EOF'
+          enabled=B"true"
+          uri="ws://openems-backend:8081"
+          apikey="unique_password_for_edge0"
+          id="ctrlBackend0"
+          service.factoryPid="Controller.Api.Backend"
+          service.pid="Controller.Api.Backend.backend0"
+          EOF
+
+          cat > /var/opt/openems/config/Controller/Api/Websocket/websocket0.config <<'EOF'
+          alias=""
+          apiTimeout=I"60"
+          enabled=B"true"
+          id="ctrlApiWebsocket0"
+          port=I"8085"
+          service.factoryPid="Controller.Api.Websocket"
+          service.pid="Controller.Api.Websocket.websocket0"
+          EOF
+
+          cat > /var/opt/openems/config/Controller/Api/Rest/rest0.config <<'EOF'
+          enabled=B"true"
+          port=I"8084"
+          service.pid="Controller.Api.Rest"
+          service.factoryPid="Controller.Api.Rest"
+          id="ctrlApiRest0"
+          alias=""
+          apiTimeout=I"60"
+          debugMode=B"false"
+          EOF
+
+          chown -R 911:911 /var/opt/openems/config/Controller
+          chown -R 911:911 /var/opt/openems/config/Scheduler
+
+          chmod -R u+rwX,go+rX /var/opt/openems/config/Controller
+          chmod -R u+rwX,go+rX /var/opt/openems/config/Scheduler

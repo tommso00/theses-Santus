@@ -18,13 +18,13 @@ spec:
       initContainers:
         - name: wait-pdc
           image: busybox:1.36
-          command: ["sh", "-c", "until nc -z pdc-edge 8900; do sleep 2; done"]
+          command: ["sh", "-c", "until nc -z pdc-edge-3 8900; do sleep 2; done"]
         - name: wait-openems
           image: busybox:1.36
           command: ["sh", "-c", "until nc -z openems 8085; do sleep 2; done"]
       containers:
         - name: bridge
-          image: pmu-bridge:latest
+          image: ghcr.io/tommso00/pmu-bridge:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: PDC_ID
@@ -34,9 +34,9 @@ spec:
             - name: PDC_PORT
               value: "8900"
             - name: PDC_COMPONENT
-              value: "ess2"
+              value: symmetricEss0
             - name: PDC_CHANNEL
-              value: "SetActivePowerEquals"
+              value: SetActivePowerEquals
             - name: OPENEMS_BASE
               value: "http://openems:8084"
             - name: OPENEMS_USER

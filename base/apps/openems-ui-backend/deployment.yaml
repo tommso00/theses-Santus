@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: openems-ui-backend
   namespace: smartgrid
+  labels:
+    environment: minikube
 spec:
   replicas: 1
   selector:
@@ -16,12 +18,26 @@ spec:
       containers:
         - name: openems-ui-backend
           image: openems/ui-backend:2025.1.0
+          imagePullPolicy: IfNotPresent
           env:
             - name: WEBSOCKET_HOST
-              value: smartgrid.local
+              value: openems-backend
             - name: WEBSOCKET_PORT
               value: "8082"
             - name: UI_WEBSOCKET
-              value: "ws://smartgrid.local/backend-ws/"
+              value: ws://openems-backend:8082/
           ports:
             - containerPort: 80
+              protocol: TCP
+          volumeMounts:
+            - name: env-config
+              mountPath: /var/www/html/openems/assets/env.js
+              subPath: env.js
+              readOnly: true
+      volumes:
+        - name: env-config
+          configMap:
+            name: ui-backend-env
+            items:
+              - key: env.js
+                path: env.js

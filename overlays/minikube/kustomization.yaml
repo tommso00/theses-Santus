@@ -1,16 +1,13 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
+﻿apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
 
 resources:
   - ../../base
-
 
 images:
   - name: pmu-bridge
     newName: ghcr.io/tommso00/pmu-bridge
     newTag: latest
-
 
 patches:
   - path: keycloak-recreate-patch.yaml
@@ -27,7 +24,7 @@ patches:
       kind: Deployment
       name: keycloak
       namespace: smartgrid
-  - path:  webproxy-ingress-no-host-patch.yaml
+  - path: webproxy-ingress-no-host-patch.yaml
     target:
       group: networking.k8s.io
       version: v1
@@ -55,7 +52,13 @@ patches:
       kind: Deployment
       name: bridge-3
       namespace: smartgrid
-
+  - path: openems-rest-patch.yaml
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: openems
+      namespace: smartgrid
 
 labels:
   - pairs:
