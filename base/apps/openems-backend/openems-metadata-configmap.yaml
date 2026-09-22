@@ -3,13 +3,16 @@ kind: ConfigMap
 metadata:
   name: openems-metadata
   namespace: smartgrid
+  labels:
+    app: openems-backend
 data:
   metadata.json: |
     {
-      "edges": [
-        {
-          "id": "edge0",
-          "name": "Edge 0"
+      "edges": {
+        "edge0": {
+          "comment": "Edge 0",
+          "apikey": "edge0",
+          "setuppassword": "edge0"
         }
-      ]
+      }
     }

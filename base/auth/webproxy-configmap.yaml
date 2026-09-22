@@ -168,10 +168,12 @@ data:
         }
 
         location /backend-ws/ {
-            auth_request /oauth2/auth;
-            error_page 401 =302 /oauth2/sign_in;
+            # auth_request /oauth2/auth;
+            # error_page 401 =302 /oauth2/sign_in;
 
-            proxy_pass http://openems_backend_ws/;
+            rewrite ^/backend-ws(.*) /$1 break;
+
+            proxy_pass http://openems_backend_ws;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
@@ -179,6 +181,7 @@ data:
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
+
             proxy_read_timeout 3600s;
             proxy_send_timeout 3600s;
         }
