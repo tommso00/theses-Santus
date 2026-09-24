@@ -28,7 +28,7 @@ spec:
           cat > /var/opt/openems/config/Controller/Api/Backend/backend0.config <<'EOF'
           enabled=B"true"
           uri="ws://openems-backend:8081"
-          apikey="unique_password_for_edge0"
+          apikey="edge0"
           id="ctrlBackend0"
           service.factoryPid="Controller.Api.Backend"
           service.pid="Controller.Api.Backend.backend0"

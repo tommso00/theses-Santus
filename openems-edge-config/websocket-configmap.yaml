@@ -4,11 +4,14 @@ metadata:
   name: openems-edge-websocket-config
   namespace: smartgrid
 data:
-  Websocket.config: |-
+  Websocket.config: |
     enabled=B"true"
     uri="ws://openems-backend:8081"
-    apikey="unique_password_for_edge0"
-    service.pid="Controller.Api.Backend"
-  Scheduler.config: |-
+    apikey="edge0"
+    id="ctrlBackend0"
+    service.factoryPid="Controller.Api.Backend"
+    service.pid="Controller.Api.Backend.backend0"
+
+  Scheduler.config: |
     enabled=B"true"
     service.pid="Scheduler.AllAlphabetically"

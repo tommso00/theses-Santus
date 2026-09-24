@@ -6,3 +6,4 @@ resources:
   - service.yaml
   - pvc.yaml
   - openems-metadata-configmap.yaml
+  - openems-backend-config-configmap.yaml
