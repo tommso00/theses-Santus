@@ -13,6 +13,23 @@ spec:
       labels:
         app: webproxy
     spec:
+      # Nginx risolve i nomi degli upstream solo all'avvio: se CoreDNS non è ancora
+      # pronto (subito dopo "minikube start") esce con "host not found in upstream".
+      # Aspetta che tutti i Service usati in nginx.conf siano risolvibili.
+      initContainers:
+        - name: wait-dns
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              for svc in openems openems-backend openems-ui-backend \
+                         bridge-1 bridge-2 bridge-3 oauth2-proxy keycloak; do
+                until nslookup "$svc.smartgrid.svc.cluster.local" >/dev/null 2>&1; do
+                  echo "attendo DNS per $svc..."; sleep 2
+                done
+              done
       containers:
         - name: nginx
           image: nginx:alpine

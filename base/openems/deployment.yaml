@@ -30,7 +30,7 @@ spec:
               mkdir -p \
                 /var/opt/openems/config/Controller/Api/Backend \
                 /var/opt/openems/config/Controller/Api/Websocket \
-                /var/opt/openems/config/Controller/Api/Rest \
+                /var/opt/openems/config/Controller/Api/Rest/ReadWrite \
                 /var/opt/openems/config/Scheduler/AllAlphabetically
 
               cat > /var/opt/openems/config/Controller/Api/Backend/backend0.config <<'EOF'
@@ -52,16 +52,29 @@ spec:
               service.pid="Controller.Api.Websocket.websocket0"
               EOF
 
-              cat > /var/opt/openems/config/Controller/Api/Rest/rest0.config <<'EOF'
+              # REST API in lettura/scrittura (usata dai bridge PMU per scrivere i setpoint).
+              # La factory corretta è "Controller.Api.Rest.ReadWrite": il vecchio file con
+              # factoryPid "Controller.Api.Rest" non corrispondeva a nessun componente OpenEMS.
+              rm -f /var/opt/openems/config/Controller/Api/Rest/rest0.config
+
+              REST_DIR=/var/opt/openems/config/Controller/Api/Rest/ReadWrite
+              OTHER_REST=$(find "$REST_DIR" -name '*.config' ! -name 'rest0.config' | head -n 1)
+              if [ -n "$OTHER_REST" ]; then
+                # Esiste già un controller REST creato a mano (es. dalla UI): non ne creo
+                # un secondo sulla stessa porta 8084.
+                echo "REST ReadWrite già presente ($OTHER_REST): salto la creazione di rest0"
+              else
+                cat > "$REST_DIR/rest0.config" <<'EOF'
               enabled=B"true"
               port=I"8084"
-              service.pid="Controller.Api.Rest"
-              service.factoryPid="Controller.Api.Rest"
+              service.pid="Controller.Api.Rest.ReadWrite.rest0"
+              service.factoryPid="Controller.Api.Rest.ReadWrite"
               id="ctrlApiRest0"
               alias=""
               apiTimeout=I"60"
               debugMode=B"false"
               EOF
+              fi
 
               chown -R 911:911 /var/opt/openems/config/Controller
               chown -R 911:911 /var/opt/openems/config/Scheduler
@@ -107,6 +120,34 @@ spec:
               cp /init-config/scheduler0.config \
                 /var/opt/openems/config/Scheduler/AllAlphabetically/scheduler0.config
 
+              # I manifest sono la fonte della verità: se nel PVC esiste un'altra
+              # configurazione con lo stesso id di un componente gestito qui (es. creata
+              # a mano dalla UI), OpenEMS va in FAULT "duplicated Component-IDs".
+              # La rimuovo, lasciando solo il file scritto dagli initContainer.
+              cd /var/opt/openems/config
+              MANAGED="
+                Controller/Api/Backend/backend0.config
+                Controller/Api/Websocket/websocket0.config
+                Controller/Api/Rest/ReadWrite/rest0.config
+                Simulator/Datasource/CSVPredefined/datasource0.config
+                Simulator/GridMeter/Acting/meter0.config
+                Simulator/EssAsymmetric/Reacting/ess0.config
+                Controller/DebugLog/debuglog0.config
+                Controller/Ess/Balancing/balancing0.config
+                Scheduler/AllAlphabetically/scheduler0.config
+              "
+              for f in $MANAGED; do
+                [ -f "$f" ] || continue
+                idline=$(grep -m1 '^id=' "$f") || continue
+                find . -name '*.config' | while read -r g; do
+                  [ "$g" = "./$f" ] && continue
+                  if grep -qxF "$idline" "$g"; then
+                    echo "Rimuovo configurazione duplicata ($idline): $g"
+                    rm -f "$g"
+                  fi
+                done
+              done
+
               chown -R 911:911 /var/opt/openems/config
               chmod -R u+rwX,go+rX /var/opt/openems/config
           volumeMounts:
@@ -117,8 +158,8 @@ spec:
 
       containers:
         - name: openems
-          image: openems/edge:latest
-          imagePullPolicy: Always
+          image: openems/edge:latest   # versione fissata con digest in base/kustomization.yaml
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
               protocol: TCP

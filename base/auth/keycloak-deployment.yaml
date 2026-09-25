@@ -59,8 +59,31 @@ spec:
                   name: auth-secrets
                   key: KEYCLOAK_ADMIN_PASSWORD
 
-            - name: KC_HOSTNAME_STRICT
-              value: "false"
+            # Valori sostituiti nei placeholder ${...} del realm importato
+            # (keycloak-realm-configmap.yaml). Nessun secret nel JSON del realm.
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: OAUTH2_PROXY_CLIENT_SECRET
+
+            - name: KEYCLOAK_TESTUSER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: KEYCLOAK_TESTUSER_PASSWORD
+
+            # URL pubblico fisso: l'issuer dei token è sempre
+            # http://smartgrid.local/auth/realms/openems, qualunque indirizzo si usi
+            # per chiamare Keycloak (è l'issuer che oauth2-proxy si aspetta).
+            - name: KC_HOSTNAME
+              value: "http://smartgrid.local/auth"
+
+            # Le chiamate server-to-server (oauth2-proxy -> token/certs via
+            # keycloak.smartgrid.svc.cluster.local:8080) restano sull'indirizzo interno.
+            # Richiede KC_HOSTNAME espresso come URL completo.
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
 
             - name: KC_PROXY_HEADERS
               value: xforwarded
@@ -68,6 +91,10 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+              protocol: TCP
+            # Interfaccia di management (health/metrics), non esposta dal Service.
+            - name: management
+              containerPort: 9000
               protocol: TCP
 
           volumeMounts:
@@ -83,24 +110,34 @@ spec:
               cpu: "500m"
               memory: "1Gi"
 
+          # Probe HTTP sugli endpoint di health di Keycloak (KC_HEALTH_ENABLED=true).
+          # Sono sulla porta di management 9000; il percorso eredita
+          # --http-relative-path, quindi è /auth/health/...
+          # /health/ready verifica anche la connessione al database: il pod non riceve
+          # traffico finché Keycloak non è davvero in grado di rispondere ai login.
           startupProbe:
-            tcpSocket:
-              port: 8080
-            failureThreshold: 72
+            httpGet:
+              path: /auth/health/started
+              port: management
             periodSeconds: 5
+            failureThreshold: 72
 
           readinessProbe:
-            tcpSocket:
-              port: 8080
-            initialDelaySeconds: 20
+            httpGet:
+              path: /auth/health/ready
+              port: management
             periodSeconds: 10
-            failureThreshold: 12
+            timeoutSeconds: 3
+            failureThreshold: 3
 
+          # Con lo startupProbe non serve più il ritardo di 180 s: la liveness parte
+          # solo dopo che l'avvio è riuscito.
           livenessProbe:
-            tcpSocket:
-              port: 8080
-            initialDelaySeconds: 180
+            httpGet:
+              path: /auth/health/live
+              port: management
             periodSeconds: 20
+            timeoutSeconds: 3
             failureThreshold: 6
 
       volumes:

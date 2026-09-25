@@ -41,10 +41,6 @@ data:
             server openems-backend:8082;
         }
 
-        upstream openems_ui {
-            server openems-ui:80;
-        }
-
         upstream openems_ui_backend {
             server openems-ui-backend:80;
         }
@@ -101,6 +97,12 @@ data:
           proxy_set_header Host $host;
         }
         
+        # Redirect al login che conserva l'URL richiesto (rd = redirect dopo il login).
+        # Usato da tutte le location protette con auth_request.
+        location @oauth2_signin {
+          return 302 /oauth2/start?rd=$request_uri;
+        }
+
         location /oauth2/ {
               proxy_pass http://oauth2_proxy;
               proxy_set_header Host $host;
@@ -138,6 +140,9 @@ data:
         }
 
         location /edge-ws/ {
+            auth_request /oauth2/auth;
+            error_page 401 = @oauth2_signin;
+
             proxy_pass http://openems_edge_ws/;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
@@ -151,6 +156,9 @@ data:
         }
 
         location /openems-edge {
+            auth_request /oauth2/auth;
+            error_page 401 = @oauth2_signin;
+
             proxy_pass http://openems_backend_ws/;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
@@ -168,8 +176,8 @@ data:
         }
 
         location /backend-ws/ {
-            # auth_request /oauth2/auth;
-            # error_page 401 =302 /oauth2/sign_in;
+            auth_request /oauth2/auth;
+            error_page 401 = @oauth2_signin;
 
             rewrite ^/backend-ws(.*) /$1 break;
 
@@ -192,7 +200,7 @@ data:
 
         location /backend-ui/ {
             auth_request /oauth2/auth;
-            error_page 401 =302 /oauth2/sign_in;
+            error_page 401 = @oauth2_signin;
 
             proxy_pass http://openems_ui_backend/;
             proxy_set_header Host $host;
@@ -203,6 +211,8 @@ data:
 
 
         location = /edge-jsonrpc {
+            # API JSON-RPC: senza sessione risponde 401 (nessun redirect HTML).
+            auth_request /oauth2/auth;
             rewrite ^ /jsonrpc break;
             proxy_pass http://openems_edge_jsonrpc;
             proxy_set_header Host $host;
@@ -212,6 +222,8 @@ data:
         }
 
         location = /edge-jsonrpc/ {
+            # API JSON-RPC: senza sessione risponde 401 (nessun redirect HTML).
+            auth_request /oauth2/auth;
             rewrite ^ /jsonrpc/ break;
             proxy_pass http://openems_edge_jsonrpc;
             proxy_set_header Host $host;
@@ -221,6 +233,9 @@ data:
         }
 
         location / {
+            auth_request /oauth2/auth;
+            error_page 401 = @oauth2_signin;
+
             proxy_pass http://openems_ui_backend/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;

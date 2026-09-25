@@ -1,0 +1,49 @@
+# ============================================================
+# Secret e credenziali
+# ============================================================
+# Secret locali usati da Kustomize (secretGenerator)
+base/auth/auth-secrets.env
+*.secret.env
+.env
+.env.*
+!*.env.example
+# Certificati, chiavi e kubeconfig
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+kubeconfig
+*.kubeconfig
+
+# ============================================================
+# File generati / di diagnostica del cluster
+# ============================================================
+# Dump dello stato live (kubectl get ... -o yaml)
+cluster-state.yaml
+# Manifest renderizzato (kubectl kustomize ... > rendered-minikube.yaml)
+rendered-minikube.yaml
+rendered-*.yaml
+# Log estratti dai pod
+*.log
+
+# ============================================================
+# Backup locali (database openPDC, dump PostgreSQL, vecchie configurazioni)
+# ============================================================
+backup/
+*.db
+*.sqlite
+*.sql
+*.dump
+*.bak
+
+# ============================================================
+# Editor e sistema operativo
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+desktop.ini
+.DS_Store

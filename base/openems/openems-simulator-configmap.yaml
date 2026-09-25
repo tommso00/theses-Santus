@@ -68,6 +68,7 @@ data:
     enabled=B"true"
     id="scheduler0"
     controllers.ids=[ \
+      "ctrlApiRest0", \
       "ctrlBackend0", \
       "ctrlApiWebsocket0", \
       "ctrlBalancing0", \

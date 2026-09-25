@@ -1,63 +1,17 @@
-﻿apiVersion: kustomize.config.k8s.io/v1beta1
+apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
   - ../../base
 
-images:
-  - name: pmu-bridge
-    newName: ghcr.io/tommso00/pmu-bridge
-    newTag: latest
-
 patches:
-  - path: keycloak-recreate-patch.yaml
-    target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: keycloak
-      namespace: smartgrid
-  - path: keycloak-resources-patch.yaml
-    target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: keycloak
-      namespace: smartgrid
+  # Su minikube l'Ingress risponde a qualsiasi host (niente vincolo su smartgrid.local).
   - path: webproxy-ingress-no-host-patch.yaml
     target:
       group: networking.k8s.io
       version: v1
       kind: Ingress
       name: webproxy
-      namespace: smartgrid
-  - path: bridge-1-pull-policy-patch.yaml
-    target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: bridge-1
-      namespace: smartgrid
-  - path: bridge-2-pull-policy-patch.yaml
-    target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: bridge-2
-      namespace: smartgrid
-  - path: bridge-3-pull-policy-patch.yaml
-    target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: bridge-3
-      namespace: smartgrid
-  - path: openems-rest-patch.yaml
-    target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: openems
       namespace: smartgrid
 
 labels:

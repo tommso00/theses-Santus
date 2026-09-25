@@ -13,6 +13,16 @@ spec:
       labels:
         app: oauth2-proxy
     spec:
+      # Dopo un riavvio di minikube oauth2-proxy partiva prima di DNS/Redis e usciva
+      # con exit code 1 (8 restart). Aspetta che Redis accetti connessioni.
+      initContainers:
+        - name: wait-redis
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - until nc -z -w 2 redis 6379; do echo "attendo redis..."; sleep 2; done
       containers:
         - name: oauth2-proxy
           image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.1
@@ -56,8 +66,9 @@ spec:
               value: "lax"
             - name: OAUTH2_PROXY_COOKIE_DOMAIN
               value: "smartgrid.local"
+            # Solo redirect post-login verso il proprio dominio (evita open redirect).
             - name: OAUTH2_PROXY_WHITELIST_DOMAINS
-              value: "*"
+              value: "smartgrid.local"
             - name: OAUTH2_PROXY_SESSION_STORE_TYPE
               value: "redis"
             - name: OAUTH2_PROXY_REDIS_CONNECTION_URL

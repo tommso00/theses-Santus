@@ -5,5 +5,5 @@ resources:
   - pvc.yaml
   - service.yaml
   - deployment.yaml
-  - ../../openems-edge-config
+  - networkpolicy.yaml
   - openems-simulator-configmap.yaml

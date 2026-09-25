@@ -71,19 +71,27 @@ spec:
             limits:
               cpu: "500m"
               memory: "512Mi"
+          # Le probe controllano le porte che servono davvero, non la console Felix (8079).
+          # In OpenEMS 2025.1.0 Edge.Websocket (8081) può non partire mai per una race
+          # con Metadata.File all'avvio, senza errori nei log. Se entro ~2 minuti la 8081
+          # non è aperta, il container viene riavviato e la race si ripresenta raramente.
+          startupProbe:
+            tcpSocket:
+              port: 8081
+            periodSeconds: 5
+            failureThreshold: 24
+          # Pronto per la UI quando il WebSocket della UI (8082) accetta connessioni.
           readinessProbe:
             tcpSocket:
-              port: 8079
-            initialDelaySeconds: 20
+              port: 8082
             periodSeconds: 10
-            timeoutSeconds: 1
+            timeoutSeconds: 2
             failureThreshold: 3
           livenessProbe:
             tcpSocket:
-              port: 8079
-            initialDelaySeconds: 45
+              port: 8081
             periodSeconds: 20
-            timeoutSeconds: 1
+            timeoutSeconds: 2
             failureThreshold: 3
           volumeMounts:
             - name: openems-backend-conf
