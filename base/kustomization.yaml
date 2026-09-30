@@ -5,6 +5,7 @@ namespace: smartgrid
 
 resources:
   - namespace.yaml
+  - networkpolicy-default-deny.yaml
   - auth/
   - openems/
   - apps/openems-backend/

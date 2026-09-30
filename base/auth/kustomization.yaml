@@ -25,3 +25,4 @@ resources:
   - webproxy-service.yaml
   - webproxy-deployment.yaml
   - webproxy-ingress.yaml
+  - networkpolicy.yaml

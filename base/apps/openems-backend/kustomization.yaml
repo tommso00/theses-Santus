@@ -7,3 +7,4 @@ resources:
   - pvc.yaml
   - openems-metadata-configmap.yaml
   - openems-backend-config-configmap.yaml
+  - networkpolicy.yaml

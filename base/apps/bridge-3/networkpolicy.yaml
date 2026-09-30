@@ -1,0 +1,22 @@
+# Accesso in ingresso al bridge PMU bridge-3.
+#   webproxy -> 8000  /monitor/bridges/3/{health,status}
+# Il bridge non riceve altro traffico: legge da pdc-edge-3 e scrive sull'Edge (uscita, non limitata).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bridge-3-ingress
+  namespace: smartgrid
+spec:
+  podSelector:
+    matchLabels:
+      app: bridge-3
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: webproxy
+      ports:
+        - protocol: TCP
+          port: 8000

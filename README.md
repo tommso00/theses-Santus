@@ -77,13 +77,14 @@ theses-Santus/
 ├── base/
 │   ├── kustomization.yaml            # moduli + versioni immagini (digest)
 │   ├── namespace.yaml                # namespace "smartgrid"
-│   ├── auth/                         # Keycloak, PostgreSQL, OAuth2 Proxy, Redis, WebProxy, Ingress
+│   ├── networkpolicy-default-deny.yaml  # default deny in ingresso per tutto il namespace
+│   ├── auth/                         # Keycloak, PostgreSQL, OAuth2 Proxy, Redis, WebProxy, Ingress (+ NetworkPolicy)
 │   │   ├── auth-secrets.env          # secret locali (NON versionato)
 │   │   ├── auth-secrets.env.example  # modello da copiare
 │   │   ├── keycloak-realm-configmap.yaml
 │   │   └── webproxy-configmap.yaml   # nginx.conf
 │   ├── openems/                      # Edge, configurazione simulatore, NetworkPolicy
-│   └── apps/
+│   └── apps/                         # ogni servizio ha la sua networkpolicy.yaml
 │       ├── openems-backend/
 │       ├── openems-ui-backend/
 │       ├── pdc-edge/  pdc-edge-2/  pdc-edge-3/
@@ -204,22 +205,43 @@ Browser → WebProxy (auth_request) → OAuth2 Proxy → Keycloak (realm openems
 
 ## 7. Sicurezza di rete (NetworkPolicy)
 
-`base/openems/networkpolicy.yaml` limita chi può raggiungere OpenEMS Edge:
+Il namespace `smartgrid` è in **default deny in ingresso** (`base/networkpolicy-default-deny.yaml`): nessun pod riceve traffico da altri pod, salvo quanto permesso esplicitamente. Ogni servizio ha la sua `networkpolicy.yaml` accanto al Deployment, con i soli flussi che lo stack usa davvero:
 
-| Da | Porta | Motivo |
-|---|---|---|
-| `bridge-1/2/3` | 8084 (REST) | Scrittura dei setpoint |
-| `webproxy` | 8084, 8085 | `/edge-jsonrpc`, `/edge-ws/` (dietro login) |
-| qualsiasi altro pod | – | **bloccato**, compresa la console Felix (8080) |
+| Servizio | Da | Porta | Motivo |
+|---|---|---|---|
+| `webproxy` | Ingress NGINX (namespace `ingress-nginx`) | 80 | Unico punto d'ingresso dal browser |
+| `oauth2-proxy` | `webproxy` | 4180 | `auth_request` e `/oauth2/` |
+| `keycloak` | `webproxy`, `oauth2-proxy` | 8080 | Login dal browser; token e JWKS sull'indirizzo interno |
+| `keycloak-db` | `keycloak` | 5432 | Database di Keycloak |
+| `redis` | `oauth2-proxy` | 6379 | Sessioni (Redis non ha password: questa è la sua protezione) |
+| `openems-ui-backend` | `webproxy` | 80 | `/`, `/backend-ui/` |
+| `openems-backend` | `openems` (Edge) | 8081 | WebSocket degli Edge |
+| `openems-backend` | `webproxy`, `openems-ui-backend` | 8082 | WebSocket della UI (`/backend-ws/`, `/openems-edge`) |
+| `openems` (Edge) | `bridge-1/2/3` | 8084 | Scrittura dei setpoint |
+| `openems` (Edge) | `webproxy` | 8084, 8085 | `/edge-jsonrpc`, `/edge-ws/` |
+| `pdc-edge`, `pdc-edge-2`, `pdc-edge-3` | solo il proprio bridge (`bridge-1`, `-2`, `-3`) | 8900 | Stream C37.118 |
+| `bridge-1/2/3` | `webproxy` | 8000 | `/monitor/bridges/N/…` |
 
-Le probe del kubelet e `kubectl port-forward` non sono interessate dalla policy. Il traffico in uscita dall'Edge verso il Backend non è limitato.
+Tutto il resto è **bloccato**, comprese le porte che nessun servizio usa: console Felix dell'Edge (8080) e del Backend (8079), API 8093 del Backend, management di Keycloak (9000), UI (8280) e porta 6165 di openPDC.
 
-**Verifica:** il primo comando deve rispondere `BLOCCATO`, il secondo `RAGGIUNGIBILE`.
+- **Non interessati:** le probe del kubelet, `kubectl port-forward` ed `exec`. La UI di openPDC e la REST dell'Edge restano quindi raggiungibili come in [§5](#5-accesso-e-rotte).
+- **Traffico in uscita:** non è limitato (DNS, Edge → Backend, bridge → openPDC/Edge). Scelta voluta: le regole in ingresso bastano a isolare i servizi e non si rischia di rompere il DNS o openPDC.
+- **Nuovi pod:** un servizio aggiunto allo stack non è raggiungibile finché non gli si scrive la sua policy. Se si aggiunge un flusso (es. un nuovo `upstream` in `nginx.conf`, o un bridge che legge da un altro openPDC), va aperto nella policy del servizio **di destinazione**.
+- **Ingress Controller:** la policy del WebProxy si aspetta l'addon `ingress` di Minikube, che gira nel namespace `ingress-nginx`. Con un controller in un altro namespace va cambiato il `namespaceSelector` in `base/auth/networkpolicy.yaml`.
+
+**Verifica** (comandi identici in bash e PowerShell). Un pod qualsiasi non raggiunge nulla, il WebProxy raggiunge solo ciò che gli serve:
 
 ```bash
-kubectl run np-check --rm -i --restart=Never -n smartgrid --image=busybox:1.36 -- sh -c 'nc -z -w 3 openems 8084 && echo RAGGIUNGIBILE || echo BLOCCATO'
-kubectl exec -n smartgrid deploy/webproxy -- sh -c 'nc -z -w 3 openems 8084 && echo RAGGIUNGIBILE || echo BLOCCATO'
+# Pod di prova: tutte le righe devono dire BLOCCATO
+kubectl run np-check --rm -i --restart=Never -n smartgrid --image=busybox:1.36 -- sh -c 'for t in openems:8084 openems-backend:8082 keycloak:8080 keycloak-db:5432 redis:6379 oauth2-proxy:4180 pdc-edge:8900 bridge-1:8000 webproxy:80; do nc -z -w 3 ${t%:*} ${t#*:} && echo "$t RAGGIUNGIBILE" || echo "$t BLOCCATO"; done'
+
+# WebProxy: openems:8084 RAGGIUNGIBILE, redis e keycloak-db BLOCCATO
+kubectl exec -n smartgrid deploy/webproxy -- sh -c 'for t in openems:8084 redis:6379 keycloak-db:5432; do nc -z -w 3 ${t%:*} ${t#*:} && echo "$t RAGGIUNGIBILE" || echo "$t BLOCCATO"; done'
 ```
+
+Poi il test funzionale: login completo e `curl -s http://smartgrid.local/monitor/bridges/1/status` con `connected: true`.
+
+**Disattivarle temporaneamente** (per escludere la rete durante una diagnosi): `kubectl delete networkpolicy --all -n smartgrid`. Si ripristinano con `kubectl apply -k overlays/minikube`.
 
 ---
 
@@ -507,6 +529,18 @@ Verifiche fatte sul cluster Minikube (Fedora, driver Docker, kindnet) il 2026-09
 | Rimozione automatica dello `scheduler0` duplicato | ✅ |
 | Backend riavviato automaticamente dallo `startupProbe` (race sulla 8081) | ✅ |
 
+NetworkPolicy su tutti i servizi, verificate sullo stesso cluster il 2026-09-30 con i comandi del [§7](#7-sicurezza-di-rete-networkpolicy):
+
+| Verifica | Esito |
+|---|---|
+| 15 NetworkPolicy presenti nel namespace | ✅ |
+| Pod qualsiasi → tutti i servizi (9 porte, `webproxy:80` compreso) | ✅ tutti `BLOCCATO` |
+| webproxy → Edge 8084, bridge-1 8000 | ✅ `RAGGIUNGIBILE` |
+| webproxy → Redis 6379, PostgreSQL 5432 | ✅ `BLOCCATO` |
+| Dopo l'apply: tutti i pod `Running` e `1/1`, login e dati live nella UI | ✅ |
+
+Prima dell'apply le policy sono state validate anche offline: render Kustomize, schema Kubernetes 1.33, simulazione di tutti i flussi ricavati dai manifest (21 permessi, tutto il resto bloccato).
+
 ---
 
 ## 17. Scelte progettuali e limiti noti
@@ -521,9 +555,9 @@ Verifiche fatte sul cluster Minikube (Fedora, driver Docker, kindnet) il 2026-09
 **Limiti noti** (accettabili su Minikube, non in produzione)
 
 - Keycloak gira in `start-dev`; tutto il traffico è in HTTP (`COOKIE_SECURE=false`).
-- Redis non ha password né persistenza.
+- Redis non ha password né persistenza (è raggiungibile solo da OAuth2 Proxy, vedi [§7](#7-sicurezza-di-rete-networkpolicy)).
 - I container non hanno un `securityContext`; l'Edge usa ancora le credenziali di default `admin`/`admin`.
-- La NetworkPolicy copre solo l'Edge.
+- Le NetworkPolicy limitano solo il traffico in ingresso, non quello in uscita.
 - Mancano resource requests/limits su oauth2-proxy, redis, webproxy e UI.
 - `/openems-edge` nel WebProxy duplica `/backend-ws/`.
 - I secret della cronologia Git vanno ruotati (vedi [§8](#8-secret-gestione-e-rotazione)).
@@ -546,5 +580,5 @@ Revisione della configurazione originale, settembre 2026.
 | Riavvii | oauth2-proxy e webproxy andavano in crash dopo `minikube start` | initContainer che aspettano Redis e il DNS |
 | openPDC | Nessuna persistenza | PVC per istanza, seed della configurazione al primo avvio, probe |
 | Immagini | `latest` e tag mobili | 12 immagini fissate per digest |
-| Rete | Nessuna restrizione | NetworkPolicy sull'Edge |
+| Rete | Nessuna restrizione | Default deny in ingresso e NetworkPolicy su ogni servizio |
 | Pulizia | Patch ridondanti nell'overlay, ConfigMap mai montati, `openems-ui` senza rotta | Rimossi |

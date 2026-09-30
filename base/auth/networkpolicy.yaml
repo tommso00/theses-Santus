@@ -1,0 +1,123 @@
+# Accesso in ingresso ai servizi dello stack di autenticazione.
+# Il namespace ha un default deny (base/networkpolicy-default-deny.yaml):
+# qui si aprono solo i flussi che servono davvero.
+#
+#   Ingress NGINX  -> webproxy:80
+#   webproxy       -> oauth2-proxy:4180   (auth_request, /oauth2/)
+#   webproxy       -> keycloak:8080       (/auth/, /realms/, /resources/, /js/)
+#   oauth2-proxy   -> keycloak:8080       (redeem del token e JWKS sull'indirizzo interno)
+#   oauth2-proxy   -> redis:6379          (sessioni; anche l'initContainer wait-redis)
+#   keycloak       -> keycloak-db:5432
+#
+# La porta di management di Keycloak (9000) non è aperta a nessun pod:
+# la usano solo le probe del kubelet, che la policy non blocca.
+
+# ---------------------------------------------------------------------------
+# WebProxy: unico punto d'ingresso, raggiungibile solo dall'Ingress Controller.
+# Su Minikube l'addon "ingress" gira nel namespace ingress-nginx (su Linux e,
+# con minikube tunnel, anche su Windows il traffico passa sempre dal controller).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: webproxy-ingress
+  namespace: smartgrid
+spec:
+  podSelector:
+    matchLabels:
+      app: webproxy
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+---
+# OAuth2 Proxy: chiamato solo dal WebProxy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: oauth2-proxy-ingress
+  namespace: smartgrid
+spec:
+  podSelector:
+    matchLabels:
+      app: oauth2-proxy
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: webproxy
+      ports:
+        - protocol: TCP
+          port: 4180
+---
+# Keycloak: login dal browser (via WebProxy) e chiamate back-channel di OAuth2 Proxy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keycloak-ingress
+  namespace: smartgrid
+spec:
+  podSelector:
+    matchLabels:
+      app: keycloak
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: ["webproxy", "oauth2-proxy"]
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# PostgreSQL: solo Keycloak.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keycloak-db-ingress
+  namespace: smartgrid
+spec:
+  podSelector:
+    matchLabels:
+      app: keycloak-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: keycloak
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# Redis (senza password): solo OAuth2 Proxy. È la protezione principale delle sessioni.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-ingress
+  namespace: smartgrid
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: oauth2-proxy
+      ports:
+        - protocol: TCP
+          port: 6379
