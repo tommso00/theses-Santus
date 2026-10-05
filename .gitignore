@@ -1,8 +1,8 @@
 # ============================================================
 # Secret e credenziali
 # ============================================================
-# Secret locali usati da Kustomize (secretGenerator)
-base/auth/auth-secrets.env
+# Credenziali locali (da cui si crea il Secret auth-secrets)
+secrets/auth-secrets.env
 *.secret.env
 .env
 .env.*
@@ -21,8 +21,8 @@ kubeconfig
 # ============================================================
 # Dump dello stato live (kubectl get ... -o yaml)
 cluster-state.yaml
-# Manifest renderizzato (kubectl kustomize ... > rendered-minikube.yaml)
-rendered-minikube.yaml
+# Manifest renderizzati (helm template ... > rendered.yaml)
+rendered.yaml
 rendered-*.yaml
 # Log estratti dai pod
 *.log

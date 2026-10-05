@@ -1,0 +1,511 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Valori del chart smartgrid",
+  "type": "object",
+  "required": [
+    "edges",
+    "edgeDefaults",
+    "pmuDefaults",
+    "backend",
+    "timedata",
+    "global",
+    "ingress",
+    "auth",
+    "images"
+  ],
+  "definitions": {
+    "quantity": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|m|k|M|G)?$"
+    },
+    "cpu": {
+      "type": [
+        "string",
+        "number"
+      ],
+      "pattern": "^[0-9]+(\\.[0-9]+)?m?$"
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": {
+          "$ref": "#/definitions/resourceList"
+        },
+        "limits": {
+          "$ref": "#/definitions/resourceList"
+        }
+      }
+    },
+    "resourceList": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu": {
+          "$ref": "#/definitions/cpu"
+        },
+        "memory": {
+          "$ref": "#/definitions/quantity"
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": [
+        "repository",
+        "tag"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "simulator": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capacity": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxApparentPower": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "initialSoc": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "loadFactor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777216
+        },
+        "loadProfile": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "bridgeEnv": {
+      "description": "Variabili del bridge (i numeri vengono convertiti in stringa). Quelle che collegano bridge, openPDC ed Edge sono calcolate dal chart.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Z_][A-Z0-9_]*$",
+        "not": {
+          "enum": [
+            "PDC_ID",
+            "PDC_HOST",
+            "PDC_PORT",
+            "PDC_COMPONENT",
+            "PDC_CHANNEL",
+            "OPENEMS_BASE",
+            "OPENEMS_USER",
+            "OPENEMS_PASS",
+            "HTTP_PORT"
+          ]
+        }
+      },
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean"
+        ]
+      }
+    },
+    "pipeline": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "bridge": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "env": {
+              "$ref": "#/definitions/bridgeEnv"
+            },
+            "resources": {
+              "$ref": "#/definitions/resources"
+            }
+          }
+        },
+        "pdc": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "storage": {
+              "$ref": "#/definitions/quantity"
+            },
+            "resources": {
+              "$ref": "#/definitions/resources"
+            }
+          }
+        }
+      }
+    }
+  },
+  "properties": {
+    "edges": {
+      "description": "Edge OpenEMS collegati al Backend",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "ID OpenEMS dell'Edge, formato edgeN",
+            "type": "string",
+            "pattern": "^edge[0-9]+$"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "apikey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "simulator": {
+            "$ref": "#/definitions/simulator"
+          },
+          "pmu": {
+            "description": "Numero di pipeline PMU, oppure lista di pipeline con override",
+            "type": [
+              "integer",
+              "array"
+            ],
+            "minimum": 0,
+            "items": {
+              "$ref": "#/definitions/pipeline"
+            }
+          }
+        }
+      }
+    },
+    "edgeDefaults": {
+      "type": "object",
+      "required": [
+        "simulator",
+        "apiTimeout",
+        "storage",
+        "resources"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "simulator": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/simulator"
+            },
+            {
+              "required": [
+                "capacity",
+                "maxApparentPower",
+                "initialSoc",
+                "loadFactor",
+                "loadProfile"
+              ]
+            }
+          ]
+        },
+        "apiTimeout": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "storage": {
+          "type": "object",
+          "required": [
+            "conf",
+            "data"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "conf": {
+              "$ref": "#/definitions/quantity"
+            },
+            "data": {
+              "$ref": "#/definitions/quantity"
+            }
+          }
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        }
+      }
+    },
+    "pmuDefaults": {
+      "type": "object",
+      "required": [
+        "bridge",
+        "pdc"
+      ],
+      "properties": {
+        "bridge": {
+          "type": "object",
+          "required": [
+            "env"
+          ],
+          "properties": {
+            "env": {
+              "$ref": "#/definitions/bridgeEnv"
+            },
+            "resources": {
+              "$ref": "#/definitions/resources"
+            }
+          }
+        },
+        "pdc": {
+          "type": "object",
+          "required": [
+            "storage"
+          ],
+          "properties": {
+            "storage": {
+              "$ref": "#/definitions/quantity"
+            },
+            "resources": {
+              "$ref": "#/definitions/resources"
+            }
+          }
+        }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "required": [
+        "storage",
+        "b2bRest"
+      ],
+      "properties": {
+        "storage": {
+          "type": "object",
+          "required": [
+            "conf",
+            "data"
+          ],
+          "properties": {
+            "conf": {
+              "$ref": "#/definitions/quantity"
+            },
+            "data": {
+              "$ref": "#/definitions/quantity"
+            }
+          }
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        },
+        "b2bRest": {
+          "type": "object",
+          "required": [
+            "enabled",
+            "port"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1024,
+              "maximum": 65535
+            }
+          }
+        }
+      }
+    },
+    "timedata": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "influxdb"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "influxdb": {
+          "type": "object",
+          "required": [
+            "org",
+            "bucket",
+            "username",
+            "retention",
+            "storage"
+          ],
+          "properties": {
+            "org": {
+              "type": "string",
+              "minLength": 1
+            },
+            "bucket": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "username": {
+              "type": "string",
+              "minLength": 1
+            },
+            "retention": {
+              "type": "string",
+              "pattern": "^(0|[0-9]+(ns|us|ms|s|m|h|d|w))$"
+            },
+            "storage": {
+              "$ref": "#/definitions/quantity"
+            },
+            "resources": {
+              "$ref": "#/definitions/resources"
+            }
+          }
+        }
+      }
+    },
+    "global": {
+      "type": "object",
+      "required": [
+        "host",
+        "environment",
+        "existingSecret"
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        },
+        "environment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "existingSecret": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "className",
+        "matchHost",
+        "controllerNamespace"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "matchHost": {
+          "type": "boolean"
+        },
+        "controllerNamespace": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "required": [
+        "realm",
+        "clientId",
+        "testUser"
+      ],
+      "properties": {
+        "realm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clientId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "testUser": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "images": {
+      "type": "object",
+      "required": [
+        "pullPolicy",
+        "openemsEdge",
+        "openemsBackend",
+        "openemsUi",
+        "openpdc",
+        "pmuBridge",
+        "influxdb",
+        "keycloak",
+        "postgres",
+        "oauth2Proxy",
+        "redis",
+        "nginx",
+        "busybox"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        },
+        "openemsEdge": {
+          "$ref": "#/definitions/image"
+        },
+        "openemsBackend": {
+          "$ref": "#/definitions/image"
+        },
+        "openemsUi": {
+          "$ref": "#/definitions/image"
+        },
+        "openpdc": {
+          "$ref": "#/definitions/image"
+        },
+        "pmuBridge": {
+          "$ref": "#/definitions/image"
+        },
+        "influxdb": {
+          "$ref": "#/definitions/image"
+        },
+        "keycloak": {
+          "$ref": "#/definitions/image"
+        },
+        "postgres": {
+          "$ref": "#/definitions/image"
+        },
+        "oauth2Proxy": {
+          "$ref": "#/definitions/image"
+        },
+        "redis": {
+          "$ref": "#/definitions/image"
+        },
+        "nginx": {
+          "$ref": "#/definitions/image"
+        },
+        "busybox": {
+          "$ref": "#/definitions/image"
+        }
+      }
+    }
+  }
+}

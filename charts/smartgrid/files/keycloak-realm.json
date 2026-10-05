@@ -1,0 +1,82 @@
+{
+  "realm": "{{ .Values.auth.realm }}",
+  "enabled": true,
+  "displayName": "OpenEMS",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "users": [
+    {
+      "username": "{{ .Values.auth.testUser }}",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Test",
+      "lastName": "User",
+      "email": "{{ .Values.auth.testUser }}@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KEYCLOAK_TESTUSER_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-{{ .Values.auth.realm }}"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "{{ .Values.auth.clientId }}",
+      "name": "{{ .Values.auth.clientId }}",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "fullScopeAllowed": true,
+      "secret": "${OAUTH2_PROXY_CLIENT_SECRET}",
+      "redirectUris": [
+        "http://{{ .Values.global.host }}/oauth2/callback"
+      ],
+      "webOrigins": [
+        "http://{{ .Values.global.host }}"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ],
+      "protocolMappers": [
+        {
+          "name": "aud-mapper-{{ .Values.auth.clientId }}",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "{{ .Values.auth.clientId }}",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

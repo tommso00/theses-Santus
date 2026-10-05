@@ -1,0 +1,153 @@
+{{- $labels := dict "root" $ "app" "keycloak" "component" "auth" -}}
+{{- $host := .Values.global.host -}}
+{{- $realm := tpl (.Files.Get "files/keycloak-realm.json") . -}}
+# Keycloak: identity provider. Il realm viene importato al primo avvio
+# (se il database esiste già, l'import è saltato: IGNORE_EXISTING).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm-import
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+data:
+  {{ .Values.auth.realm }}-realm.json: |
+    {{- $realm | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        {{- include "smartgrid.labels" (merge (dict "pod" true) $labels) | nindent 8 }}
+      annotations:
+        checksum/realm: {{ $realm | sha256sum }}
+    spec:
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        {{- include "smartgrid.waitFor" (dict "root" $ "name" "wait-db" "host" "keycloak-db" "port" 5432) | nindent 8 }}
+      containers:
+        - name: keycloak
+          {{- include "smartgrid.image" (dict "root" $ "name" "keycloak") | nindent 10 }}
+          args:
+            - start-dev
+            - --import-realm
+            - --http-relative-path=/auth
+            - --http-enabled=true
+            - --proxy-headers=xforwarded
+          env:
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: {{ printf "jdbc:postgresql://keycloak-db.%s.svc.cluster.local:5432/keycloak" .Release.Namespace | quote }}
+            - name: KC_DB_USERNAME
+              value: keycloak
+            {{- include "smartgrid.secretEnv" (dict "root" $ "name" "KC_DB_PASSWORD" "key" "KEYCLOAK_DB_PASSWORD") | nindent 12 }}
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_METRICS_ENABLED
+              value: "true"
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: admin
+            {{- include "smartgrid.secretEnv" (dict "root" $ "name" "KC_BOOTSTRAP_ADMIN_PASSWORD" "key" "KEYCLOAK_ADMIN_PASSWORD") | nindent 12 }}
+            # Valori sostituiti nei placeholder ${...} del realm importato:
+            # nessun secret nel JSON del realm.
+            {{- include "smartgrid.secretEnv" (dict "root" $ "name" "OAUTH2_PROXY_CLIENT_SECRET" "key" "OAUTH2_PROXY_CLIENT_SECRET") | nindent 12 }}
+            {{- include "smartgrid.secretEnv" (dict "root" $ "name" "KEYCLOAK_TESTUSER_PASSWORD" "key" "KEYCLOAK_TESTUSER_PASSWORD") | nindent 12 }}
+            # URL pubblico fisso: l'issuer dei token è sempre http://<host>/auth/realms/<realm>,
+            # qualunque indirizzo si usi per chiamare Keycloak.
+            - name: KC_HOSTNAME
+              value: {{ printf "http://%s/auth" $host | quote }}
+            # Le chiamate server-to-server di OAuth2 Proxy restano sull'indirizzo interno.
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            # Interfaccia di management (health/metrics), non esposta dal Service.
+            - name: management
+              containerPort: 9000
+              protocol: TCP
+          volumeMounts:
+            - name: realm-import
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+          resources:
+            {{- toYaml .Values.auth.keycloak.resources | nindent 12 }}
+          # Health sulla porta di management 9000 (il percorso eredita /auth).
+          # /health/ready verifica anche il database.
+          startupProbe:
+            httpGet:
+              path: /auth/health/started
+              port: management
+            periodSeconds: 5
+            failureThreshold: 72
+          readinessProbe:
+            httpGet:
+              path: /auth/health/ready
+              port: management
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /auth/health/live
+              port: management
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 6
+      volumes:
+        - name: realm-import
+          configMap:
+            name: keycloak-realm-import
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+# Login dal browser (via WebProxy) e chiamate back-channel di OAuth2 Proxy.
+# La porta di management 9000 non è aperta a nessun pod (solo probe del kubelet).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keycloak-ingress
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: keycloak
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [webproxy, oauth2-proxy]
+      ports:
+        - protocol: TCP
+          port: 8080

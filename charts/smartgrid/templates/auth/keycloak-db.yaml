@@ -1,0 +1,100 @@
+{{- $labels := dict "root" $ "app" "keycloak-db" "component" "auth" -}}
+# PostgreSQL: database di Keycloak (realm, utenti, client).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: keycloak-db-data
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+  annotations:
+    {{- include "smartgrid.keepPvc" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.auth.database.storage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak-db
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: keycloak-db
+  template:
+    metadata:
+      labels:
+        {{- include "smartgrid.labels" (merge (dict "pod" true) $labels) | nindent 8 }}
+    spec:
+      containers:
+        - name: postgres
+          {{- include "smartgrid.image" (dict "root" $ "name" "postgres") | nindent 10 }}
+          env:
+            - name: POSTGRES_DB
+              value: keycloak
+            - name: POSTGRES_USER
+              value: keycloak
+            {{- include "smartgrid.secretEnv" (dict "root" $ "name" "POSTGRES_PASSWORD" "key" "KEYCLOAK_DB_PASSWORD") | nindent 12 }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          resources:
+            {{- toYaml .Values.auth.database.resources | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: keycloak-db-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-db
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  selector:
+    app: keycloak-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keycloak-db-ingress
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: keycloak-db
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: keycloak
+      ports:
+        - protocol: TCP
+          port: 5432

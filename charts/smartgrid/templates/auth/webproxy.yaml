@@ -1,0 +1,141 @@
+{{- $labels := dict "root" $ "app" "webproxy" "component" "auth" -}}
+{{- $nginx := tpl (.Files.Get "files/nginx.conf") . -}}
+# WebProxy (Nginx): unico punto d'ingresso dal browser. Instrada verso UI,
+# Backend, Edge, bridge e Keycloak e controlla il login con OAuth2 Proxy.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webproxy-nginx-conf
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+data:
+  nginx.conf: |
+    {{- $nginx | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webproxy
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webproxy
+  template:
+    metadata:
+      labels:
+        {{- include "smartgrid.labels" (merge (dict "pod" true) $labels) | nindent 8 }}
+      annotations:
+        # Nuova configurazione (es. Edge aggiunti) -> nuovo pod.
+        checksum/nginx: {{ $nginx | sha256sum }}
+    spec:
+      # Nginx risolve gli upstream solo all'avvio: se il DNS non è pronto (subito
+      # dopo "minikube start") esce con "host not found in upstream". Aspetta
+      # tutti i Service usati in nginx.conf, ricavati dal file stesso.
+      initContainers:
+        - name: wait-dns
+          {{- include "smartgrid.image" (dict "root" $ "name" "busybox") | nindent 10 }}
+          command:
+            - sh
+            - -c
+            - |
+              SERVICES=$(grep -oE 'server +[a-z0-9.-]+:[0-9]+' /etc/nginx/nginx.conf \
+                | sed -E 's/server +//; s/:[0-9]+$//' | sort -u)
+              for svc in $SERVICES; do
+                until nslookup "$svc.{{ .Release.Namespace }}.svc.cluster.local" >/dev/null 2>&1; do
+                  echo "attendo DNS per $svc..."; sleep 2
+                done
+              done
+              echo "DNS pronto per:" $SERVICES
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+      containers:
+        - name: nginx
+          {{- include "smartgrid.image" (dict "root" $ "name" "nginx") | nindent 10 }}
+          ports:
+            - containerPort: 80
+          resources:
+            {{- toYaml .Values.webproxy.resources | nindent 12 }}
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+          readinessProbe:
+            httpGet:
+              path: /monitor/
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /monitor/
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: webproxy-nginx-conf
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webproxy
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  selector:
+    app: webproxy
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+# Raggiungibile solo dall'Ingress Controller.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: webproxy-ingress
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: webproxy
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.ingress.controllerNamespace }}
+      ports:
+        - protocol: TCP
+          port: 80
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: webproxy
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - {{- if .Values.ingress.matchHost }}
+      host: {{ .Values.global.host }}
+      {{- end }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: webproxy
+                port:
+                  number: 80
+{{- end }}

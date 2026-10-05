@@ -1,0 +1,119 @@
+{{- if .Values.timedata.enabled }}
+{{- $labels := dict "root" $ "app" "influxdb" "component" "timedata" -}}
+{{- $i := .Values.timedata.influxdb -}}
+# InfluxDB 2: storico dei dati di tutti gli Edge, scritto e letto dal Backend
+# (Timedata.InfluxDB). Al primo avvio con PVC vuoto crea organizzazione, bucket,
+# utente e token (DOCKER_INFLUXDB_INIT_*); agli avvii successivi non tocca nulla.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: influxdb-data
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+  annotations:
+    {{- include "smartgrid.keepPvc" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ $i.storage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: influxdb
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: influxdb
+  template:
+    metadata:
+      labels:
+        {{- include "smartgrid.labels" (merge (dict "pod" true) $labels) | nindent 8 }}
+    spec:
+      containers:
+        - name: influxdb
+          {{- include "smartgrid.image" (dict "root" $ "name" "influxdb") | nindent 10 }}
+          env:
+            - name: DOCKER_INFLUXDB_INIT_MODE
+              value: setup
+            - name: DOCKER_INFLUXDB_INIT_USERNAME
+              value: {{ $i.username | quote }}
+            {{- include "smartgrid.secretEnv" (dict "root" $ "name" "DOCKER_INFLUXDB_INIT_PASSWORD" "key" "INFLUXDB_ADMIN_PASSWORD") | nindent 12 }}
+            {{- include "smartgrid.secretEnv" (dict "root" $ "name" "DOCKER_INFLUXDB_INIT_ADMIN_TOKEN" "key" "INFLUXDB_TOKEN") | nindent 12 }}
+            - name: DOCKER_INFLUXDB_INIT_ORG
+              value: {{ $i.org | quote }}
+            - name: DOCKER_INFLUXDB_INIT_BUCKET
+              value: {{ $i.bucket | quote }}
+            - name: DOCKER_INFLUXDB_INIT_RETENTION
+              value: {{ $i.retention | quote }}
+          ports:
+            - name: http
+              containerPort: 8086
+          resources:
+            {{- toYaml $i.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8086
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8086
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          volumeMounts:
+            # Dati e configurazione (creata dal setup iniziale) sullo stesso PVC.
+            - name: data
+              mountPath: /var/lib/influxdb2
+              subPath: data
+            - name: data
+              mountPath: /etc/influxdb2
+              subPath: config
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: influxdb-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: influxdb
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  selector:
+    app: influxdb
+  ports:
+    - name: http
+      port: 8086
+      targetPort: 8086
+---
+# Solo il Backend legge e scrive lo storico.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: influxdb-ingress
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: influxdb
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: openems-backend
+      ports:
+        - protocol: TCP
+          port: 8086
+{{- end }}

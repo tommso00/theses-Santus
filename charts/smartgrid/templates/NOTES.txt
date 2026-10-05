@@ -1,0 +1,17 @@
+{{- $topo := include "smartgrid.topology" . | fromJson -}}
+Smart Grid installato nel namespace {{ .Release.Namespace }}.
+
+Edge collegati al Backend: {{ len $topo.edges }}
+{{- range $e := $topo.edges }}
+  - {{ $e.id }} ({{ $e.name }}): {{ len $e.pipelines }} pipeline PMU{{ range $p := $e.pipelines }} {{ $p.bridge }}{{ end }}
+{{- end }}
+Storico (InfluxDB): {{ ternary "attivo" "disattivato" .Values.timedata.enabled }}
+API Backend2Backend: {{ if .Values.backend.b2bRest.enabled }}porta {{ int .Values.backend.b2bRest.port }} (kubectl port-forward -n {{ .Release.Namespace }} svc/openems-backend {{ int .Values.backend.b2bRest.port }}){{ else }}disattivata{{ end }}
+
+Il Secret "{{ .Values.global.existingSecret }}" deve esistere prima dell'avvio dei pod:
+  kubectl create secret generic {{ .Values.global.existingSecret }} -n {{ .Release.Namespace }} --from-env-file=secrets/auth-secrets.env --dry-run=client -o yaml | kubectl apply -f -
+
+Stato dei pod:
+  kubectl get pods -n {{ .Release.Namespace }} -L smartgrid.io/edge,smartgrid.io/role
+
+UI di OpenEMS (tutti gli Edge): http://{{ .Values.global.host }}/

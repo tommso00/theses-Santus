@@ -1,0 +1,128 @@
+{{- $labels := dict "root" $ "app" "oauth2-proxy" "component" "auth" -}}
+{{- $host := .Values.global.host -}}
+{{- $issuer := printf "http://%s/auth/realms/%s" $host .Values.auth.realm -}}
+{{- $internal := printf "http://keycloak.%s.svc.cluster.local:8080/auth/realms/%s/protocol/openid-connect" .Release.Namespace .Values.auth.realm -}}
+# OAuth2 Proxy: login OIDC con Keycloak per le rotte protette del WebProxy.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth2-proxy
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oauth2-proxy
+  template:
+    metadata:
+      labels:
+        {{- include "smartgrid.labels" (merge (dict "pod" true) $labels) | nindent 8 }}
+    spec:
+      # Dopo un riavvio di Minikube partiva prima di Redis e usciva con errore.
+      initContainers:
+        {{- include "smartgrid.waitFor" (dict "root" $ "name" "wait-redis" "host" "redis" "port" 6379) | nindent 8 }}
+      containers:
+        - name: oauth2-proxy
+          {{- include "smartgrid.image" (dict "root" $ "name" "oauth2Proxy") | nindent 10 }}
+          ports:
+            - containerPort: 4180
+          env:
+            - name: OAUTH2_PROXY_PROVIDER
+              value: oidc
+            - name: OAUTH2_PROXY_OIDC_ISSUER_URL
+              value: {{ $issuer | quote }}
+            - name: OAUTH2_PROXY_CLIENT_ID
+              value: {{ .Values.auth.clientId | quote }}
+            {{- include "smartgrid.secretEnv" (dict "root" $ "name" "OAUTH2_PROXY_CLIENT_SECRET" "key" "OAUTH2_PROXY_CLIENT_SECRET") | nindent 12 }}
+            {{- include "smartgrid.secretEnv" (dict "root" $ "name" "OAUTH2_PROXY_COOKIE_SECRET" "key" "OAUTH2_PROXY_COOKIE_SECRET") | nindent 12 }}
+            - name: OAUTH2_PROXY_REDIRECT_URL
+              value: {{ printf "http://%s/oauth2/callback" $host | quote }}
+            - name: OAUTH2_PROXY_EMAIL_DOMAINS
+              value: "*"
+            - name: OAUTH2_PROXY_UPSTREAMS
+              value: "static://202"
+            - name: OAUTH2_PROXY_HTTP_ADDRESS
+              value: "0.0.0.0:4180"
+            - name: OAUTH2_PROXY_REVERSE_PROXY
+              value: "true"
+            - name: OAUTH2_PROXY_SET_XAUTHREQUEST
+              value: "true"
+            - name: OAUTH2_PROXY_PASS_ACCESS_TOKEN
+              value: "true"
+            - name: OAUTH2_PROXY_SKIP_PROVIDER_BUTTON
+              value: "true"
+            - name: OAUTH2_PROXY_SKIP_OIDC_DISCOVERY
+              value: "true"
+            - name: OAUTH2_PROXY_COOKIE_NAME
+              value: "_oauth2_proxy_openems"
+            - name: OAUTH2_PROXY_COOKIE_SECURE
+              value: "false"
+            - name: OAUTH2_PROXY_COOKIE_SAMESITE
+              value: "lax"
+            - name: OAUTH2_PROXY_COOKIE_DOMAIN
+              value: {{ $host | quote }}
+            # Redirect dopo il login solo verso il proprio dominio (evita open redirect).
+            - name: OAUTH2_PROXY_WHITELIST_DOMAINS
+              value: {{ $host | quote }}
+            - name: OAUTH2_PROXY_SESSION_STORE_TYPE
+              value: "redis"
+            - name: OAUTH2_PROXY_REDIS_CONNECTION_URL
+              value: {{ printf "redis://redis.%s.svc.cluster.local:6379" .Release.Namespace | quote }}
+            # Login dal browser sull'URL pubblico; token e chiavi sull'indirizzo interno.
+            - name: OAUTH2_PROXY_LOGIN_URL
+              value: {{ printf "%s/protocol/openid-connect/auth" $issuer | quote }}
+            - name: OAUTH2_PROXY_REDEEM_URL
+              value: {{ printf "%s/token" $internal | quote }}
+            - name: OAUTH2_PROXY_OIDC_JWKS_URL
+              value: {{ printf "%s/certs" $internal | quote }}
+            - name: OAUTH2_PROXY_CODE_CHALLENGE_METHOD
+              value: "S256"
+          resources:
+            {{- toYaml .Values.auth.oauth2Proxy.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 4180
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 4180
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oauth2-proxy
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  selector:
+    app: oauth2-proxy
+  ports:
+    - name: http
+      port: 4180
+      targetPort: 4180
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: oauth2-proxy-ingress
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: oauth2-proxy
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: webproxy
+      ports:
+        - protocol: TCP
+          port: 4180

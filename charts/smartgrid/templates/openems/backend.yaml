@@ -1,0 +1,192 @@
+{{- $labels := dict "root" $ "app" "openems-backend" "component" "openems" -}}
+{{- $b2b := .Values.backend.b2bRest -}}
+{{- /* Configurazione OSGi del Backend: un unico punto che aggrega tutti gli Edge. */ -}}
+{{- $config := include "smartgrid.backendConfig" . -}}
+# OpenEMS Backend: aggrega tutti gli Edge della topologia.
+#   Metadata.File       elenco degli Edge e delle loro apikey (metadata.json)
+#   Edge.Websocket      8081: connessione di ogni Edge (ctrlBackend0)
+#   Ui.Websocket        8082: la UI vede tutti gli Edge da un solo punto
+#   Timedata            storico di tutti gli Edge su InfluxDB (se timedata.enabled)
+#   Backend2Backend     {{ $b2b.port }}: API JSON-RPC su tutti gli Edge (se backend.b2bRest.enabled)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openems-backend-config
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+data:
+  {{- $config | nindent 2 }}
+  config-init.sh: |
+    {{- .Files.Get "files/backend-config-init.sh" | nindent 4 }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openems-backend-conf
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+  annotations:
+    {{- include "smartgrid.keepPvc" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.backend.storage.conf }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openems-backend-data
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+  annotations:
+    {{- include "smartgrid.keepPvc" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.backend.storage.data }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openems-backend
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: openems-backend
+  template:
+    metadata:
+      labels:
+        {{- include "smartgrid.labels" (merge (dict "pod" true) $labels) | nindent 8 }}
+      annotations:
+        # Edge aggiunti/tolti o storico attivato -> il Backend riparte da solo.
+        checksum/config: {{ printf "%s%s" $config (.Files.Get "files/backend-config-init.sh") | sha256sum }}
+    spec:
+      initContainers:
+        - name: config-init
+          {{- include "smartgrid.image" (dict "root" $ "name" "busybox") | nindent 10 }}
+          command: ["sh", "/bootstrap/config-init.sh"]
+          {{- if .Values.timedata.enabled }}
+          env:
+            {{- include "smartgrid.secretEnv" (dict "root" $ "name" "INFLUXDB_TOKEN" "key" "INFLUXDB_TOKEN") | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: conf
+              mountPath: /var/opt/openems/config
+            - name: bootstrap
+              mountPath: /bootstrap
+              readOnly: true
+        {{- if .Values.timedata.enabled }}
+        {{- include "smartgrid.waitFor" (dict "root" $ "name" "wait-influxdb" "host" "influxdb" "port" 8086) | nindent 8 }}
+        {{- end }}
+      containers:
+        - name: openems-backend
+          {{- include "smartgrid.image" (dict "root" $ "name" "openemsBackend") | nindent 10 }}
+          ports:
+            - name: felix
+              containerPort: 8079
+            - name: edge-ws
+              containerPort: 8081
+            - name: ui-ws
+              containerPort: 8082
+            {{- if $b2b.enabled }}
+            - name: b2b-rest
+              containerPort: {{ int $b2b.port }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          # In OpenEMS 2025.1.0 Edge.Websocket (8081) può non partire per una race
+          # all'avvio, senza errori nei log: se entro ~2 minuti la 8081 non è aperta
+          # il container viene riavviato.
+          startupProbe:
+            tcpSocket:
+              port: 8081
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            tcpSocket:
+              port: 8082
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: 8081
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+          volumeMounts:
+            - name: conf
+              mountPath: /var/opt/openems/config
+            - name: data
+              mountPath: /var/opt/openems/data
+      volumes:
+        - name: conf
+          persistentVolumeClaim:
+            claimName: openems-backend-conf
+        - name: data
+          persistentVolumeClaim:
+            claimName: openems-backend-data
+        - name: bootstrap
+          configMap:
+            name: openems-backend-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openems-backend
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  selector:
+    app: openems-backend
+  ports:
+    - name: edge-ws
+      port: 8081
+      targetPort: 8081
+    - name: ui-ws
+      port: 8082
+      targetPort: 8082
+    {{- if $b2b.enabled }}
+    - name: b2b-rest
+      port: {{ int $b2b.port }}
+      targetPort: {{ int $b2b.port }}
+    {{- end }}
+---
+# 8081 da tutti gli Edge, 8082 da WebProxy e UI. Chiuse a tutti i pod: console
+# Felix (8079) e API Backend2Backend: si usano con kubectl port-forward, perché
+# Metadata.File accetta qualsiasi credenziale con ruolo ADMIN su tutti gli Edge.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openems-backend-ingress
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: openems-backend
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              smartgrid.io/role: openems-edge
+      ports:
+        - protocol: TCP
+          port: 8081
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [webproxy, openems-ui]
+      ports:
+        - protocol: TCP
+          port: 8082

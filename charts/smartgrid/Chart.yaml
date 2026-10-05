@@ -1,0 +1,14 @@
+apiVersion: v2
+name: smartgrid
+description: >-
+  Smart Grid su Kubernetes: N Edge OpenEMS (batterie simulate) con le loro pipeline
+  PMU (openPDC + bridge), un OpenEMS Backend che li aggrega (UI, storico InfluxDB,
+  API Backend2Backend) e accesso dal browser dietro Keycloak + OAuth2 Proxy.
+type: application
+version: 2.0.0
+appVersion: "2025.1.0"
+keywords:
+  - openems
+  - smart-grid
+  - pmu
+  - openpdc

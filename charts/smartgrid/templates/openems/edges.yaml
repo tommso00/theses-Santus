@@ -1,0 +1,184 @@
+{{- /* Un Edge OpenEMS per ogni elemento di "edges". */ -}}
+{{- $root := . -}}
+{{- $topo := include "smartgrid.topology" . | fromJson -}}
+{{- $script := .Files.Get "files/edge-config-init.sh" -}}
+# Script comune a tutti gli Edge: scrive nel PVC la configurazione gestita dal chart.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openems-edge-init
+  labels:
+    {{- include "smartgrid.labels" (dict "root" $root "app" "openems-edge" "component" "openems") | nindent 4 }}
+data:
+  config-init.sh: |
+    {{- $script | nindent 4 }}
+{{- range $e := $topo.edges }}
+{{- $labels := dict "root" $root "app" $e.name "component" "openems" "role" "openems-edge" "edge" $e.id }}
+{{- $config := include "smartgrid.edgeConfig" (dict "root" $root "edge" $e) }}
+---
+# ========================================================== Edge {{ $e.id }}
+# {{ $e.comment }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $e.name }}-config
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+data:
+  {{- $config | nindent 2 }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $e.name }}-conf
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+  annotations:
+    {{- include "smartgrid.keepPvc" $root | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ $root.Values.edgeDefaults.storage.conf }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $e.name }}-data
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+  annotations:
+    {{- include "smartgrid.keepPvc" $root | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ $root.Values.edgeDefaults.storage.data }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $e.name }}
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ $e.name }}
+  template:
+    metadata:
+      labels:
+        {{- include "smartgrid.labels" (merge (dict "pod" true) $labels) | nindent 8 }}
+      annotations:
+        checksum/config: {{ printf "%s%s" $config $script | sha256sum }}
+    spec:
+      initContainers:
+        - name: config-init
+          {{- include "smartgrid.image" (dict "root" $root "name" "busybox") | nindent 10 }}
+          command: ["sh", "/scripts/config-init.sh"]
+          volumeMounts:
+            - name: conf
+              mountPath: /var/opt/openems/config
+            - name: init-config
+              mountPath: /init-config
+              readOnly: true
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+      containers:
+        - name: openems
+          {{- include "smartgrid.image" (dict "root" $root "name" "openemsEdge") | nindent 10 }}
+          ports:
+            - name: felix
+              containerPort: 8080
+            - name: rest
+              containerPort: 8084
+            - name: ws
+              containerPort: 8085
+          resources:
+            {{- toYaml $root.Values.edgeDefaults.resources | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              port: 8085
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: 8085
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+          volumeMounts:
+            - name: conf
+              mountPath: /var/opt/openems/config
+            - name: data
+              mountPath: /var/opt/openems/data
+      volumes:
+        - name: conf
+          persistentVolumeClaim:
+            claimName: {{ $e.name }}-conf
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $e.name }}-data
+        - name: init-config
+          configMap:
+            name: {{ $e.name }}-config
+        - name: scripts
+          configMap:
+            name: openems-edge-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $e.name }}
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  selector:
+    app: {{ $e.name }}
+  ports:
+    - name: rest
+      port: 8084
+      targetPort: 8084
+    - name: ws
+      port: 8085
+      targetPort: 8085
+---
+# REST 8084: solo i bridge di questo Edge e il WebProxy (/edges/{{ $e.id }}/jsonrpc).
+# WebSocket 8085: solo il WebProxy (/edges/{{ $e.id }}/ws/). Console Felix 8080 chiusa.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $e.name }}-ingress
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $e.name }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              smartgrid.io/role: pmu-bridge
+              smartgrid.io/edge: {{ $e.id }}
+      ports:
+        - protocol: TCP
+          port: 8084
+    - from:
+        - podSelector:
+            matchLabels:
+              app: webproxy
+      ports:
+        - protocol: TCP
+          port: 8084
+        - protocol: TCP
+          port: 8085
+{{- end }}

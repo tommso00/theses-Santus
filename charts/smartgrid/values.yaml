@@ -1,0 +1,229 @@
+# =============================================================================
+# Smart Grid su Kubernetes - valori del chart
+#
+# Installazione/aggiornamento (identico in bash e PowerShell):
+#   helm upgrade --install smartgrid charts/smartgrid -n smartgrid
+#
+# Per cambiare il numero di Edge o di pipeline PMU basta modificare "edges"
+# qui sotto (oppure un proprio file passato con -f) e rilanciare il comando.
+# I valori sono controllati da values.schema.json prima di ogni installazione.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Topologia: Edge OpenEMS e loro pipeline PMU
+# -----------------------------------------------------------------------------
+# Ogni Edge è una batteria simulata OpenEMS collegata all'unico Backend.
+#   id         ID OpenEMS dell'Edge (formato edgeN). È anche la sua apikey verso
+#              il Backend, se "apikey" non è indicata.
+#   comment    descrizione mostrata dalla UI di OpenEMS
+#   simulator  override dei parametri in edgeDefaults.simulator
+#   pmu        numero di pipeline (openPDC + bridge) con i valori di pmuDefaults,
+#              oppure una lista con un elemento per pipeline e i suoi override:
+#                - bridge: { env: { PUBLISH_PHASOR_INDEX: "2" } }
+#
+# Nomi delle risorse (Edge edge0, pipeline 2):
+#   Edge     openems-edge0      PVC openems-edge0-conf, openems-edge0-data
+#   openPDC  pdc-edge0-2        PVC pdc-edge0-2-config
+#   bridge   bridge-edge0-2
+edges:
+  - id: edge0
+    comment: Edge 0 - simulatore
+    pmu: 2
+
+  - id: edge1
+    comment: Edge 1 - simulatore
+    simulator:
+      initialSoc: 70
+      capacity: 20000
+      maxApparentPower: 15000
+    pmu:
+      - {}
+      - bridge:
+          env:
+            PUBLISH_PHASOR_INDEX: "2"
+
+# Valori comuni a tutti gli Edge.
+edgeDefaults:
+  simulator:
+    capacity: 10000            # Wh, batteria ess0
+    maxApparentPower: 10000    # VA, batteria ess0
+    initialSoc: 50             # %
+    loadFactor: 10000          # W: il profilo di carico (datasource0) è moltiplicato per questo valore
+    loadProfile: H0_HOUSEHOLD_SUMMER_WEEKDAY_STANDARD_LOAD_PROFILE
+  # Secondi per cui un setpoint scritto via REST o via Backend resta attivo
+  # dopo l'ultima scrittura; poi torna il controller di bilanciamento.
+  apiTimeout: 60
+  storage:
+    conf: 2Gi
+    data: 5Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 750m, memory: 512Mi }
+
+# Valori comuni a tutte le pipeline PMU.
+pmuDefaults:
+  bridge:
+    # Variabili d'ambiente del bridge. Quelle che collegano il bridge al suo
+    # openPDC e al suo Edge (PDC_ID, PDC_HOST, OPENEMS_BASE, ...) sono
+    # calcolate dal chart e non si impostano qui.
+    env:
+      PUBLISH_INTERVAL_S: "1.0"
+      RECV_TIMEOUT_S: "5.0"
+      CONNECT_RETRY_S: "10.0"
+      STALE_DATA_S: "10.0"
+      STATUS_INTERVAL_S: "30.0"
+      STARTUP_DELAY_S: "15.0"
+      IDCODE: "235"
+      EXPECTED_DATA_IDCODE: "235"
+      EXPECTED_DATA_FRAMESIZE: "68"
+      PHASOR_COUNT: "5"
+      PUBLISH_PHASOR_INDEX: "1"
+      PHASOR1_LABEL: PHASOR_1
+      PHASOR2_LABEL: PHASOR_2
+      PHASOR3_LABEL: PHASOR_3
+      PHASOR4_LABEL: PHASOR_4
+      PHASOR5_LABEL: PHASOR_5
+      P_EQ_SCALE: "0.001"
+      USE_SYNTHETIC_DATA: "false"
+      # Solo dati reali delle PMU: se openPDC non invia dati, nessun valore inventato.
+      ALLOW_SYNTHETIC_FALLBACK: "false"
+      LOG_LEVEL: INFO
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 250m, memory: 256Mi }
+  pdc:
+    storage: 1Gi
+    # 250m bastano a regime e lasciano margine a 4+ istanze su un Minikube da 4 CPU.
+    resources:
+      requests: { cpu: 250m, memory: 512Mi }
+      limits: { cpu: "1", memory: 1Gi }
+
+# -----------------------------------------------------------------------------
+# OpenEMS Backend: aggrega tutti gli Edge
+# -----------------------------------------------------------------------------
+backend:
+  storage:
+    conf: 1Gi
+    data: 5Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 768Mi }
+  # API Backend2Backend (JSON-RPC su HTTP): stato e valori dei canali di tutti
+  # gli Edge con una sola chiamata, scrittura su qualsiasi Edge (edgeRpc).
+  # Nessun pod può raggiungerla: si usa con kubectl port-forward (vedi README).
+  b2bRest:
+    enabled: true
+    port: 8075
+
+# Storico dei dati di tutti gli Edge (Timedata del Backend su InfluxDB 2).
+# Senza storico la UI mostra solo i valori in tempo reale.
+timedata:
+  enabled: true
+  influxdb:
+    org: openems
+    bucket: openems
+    username: openems
+    retention: 30d             # durata dei dati; 0 = per sempre
+    storage: 5Gi
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 1Gi }
+
+ui:
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+# -----------------------------------------------------------------------------
+# Accesso dal browser e autenticazione
+# -----------------------------------------------------------------------------
+global:
+  # Hostname pubblico: URL di login, issuer OIDC, cookie, WebSocket della UI.
+  host: smartgrid.local
+  # Etichetta "environment" su tutte le risorse.
+  environment: minikube
+  # Secret con le credenziali, creato da secrets/auth-secrets.env (vedi README).
+  # Non è gestito dal chart: i valori non finiscono nella cronologia di Helm.
+  existingSecret: auth-secrets
+
+ingress:
+  enabled: true
+  className: nginx
+  # false: l'Ingress risponde a qualsiasi host (comodo su Minikube con tunnel);
+  # true: solo a global.host.
+  matchHost: false
+  # Namespace dell'Ingress Controller: è l'unica sorgente ammessa verso il WebProxy.
+  controllerNamespace: ingress-nginx
+
+auth:
+  realm: openems
+  clientId: openems-gateway
+  testUser: testuser
+  keycloak:
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { cpu: 500m, memory: 1Gi }
+  database:
+    storage: 5Gi
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { cpu: 500m, memory: 1Gi }
+  oauth2Proxy:
+    resources:
+      requests: { cpu: 20m, memory: 32Mi }
+      limits: { cpu: 200m, memory: 128Mi }
+  redis:
+    resources:
+      requests: { cpu: 20m, memory: 32Mi }
+      limits: { cpu: 200m, memory: 128Mi }
+
+webproxy:
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+# -----------------------------------------------------------------------------
+# Immagini: fissate per digest (conta il digest, il tag è solo un'etichetta).
+# Per aggiornarne una:
+#   docker pull <immagine>:<tag>
+#   docker inspect --format '{{index .RepoDigests 0}}' <immagine>:<tag>
+# -----------------------------------------------------------------------------
+images:
+  pullPolicy: IfNotPresent
+  openemsEdge:
+    repository: openems/edge
+    tag: "latest@sha256:afd148c64b9d619bd9d2fd34591f9691a0300c1906fb38f808f151fc51cea836"
+  openemsBackend:
+    repository: openems/backend
+    tag: "2025.1.0@sha256:47f7e104266cdbd7f840b2ef6dd734ae1eab85ec3884d72a0931d0db9babd441"
+  openemsUi:
+    repository: openems/ui-backend
+    tag: "2025.1.0@sha256:7656ffa51db77558dd49fa37135495803d982be69ffd25732d10373839fce8a5"
+  openpdc:
+    repository: gridprotectionalliance/openpdc
+    tag: "v2.9.148@sha256:f1c7705904a0fda7100b4ab64107ddaf7863c26de65dcd924b4e9bf3c1f829fc"
+  pmuBridge:
+    repository: ghcr.io/tommso00/pmu-bridge
+    tag: "latest@sha256:48487f2d62de06881ce2583e401a47067beb663a90331048d09180bc3638c097"
+  # DA FISSARE col digest al primo pull (immagine nuova in questa versione).
+  influxdb:
+    repository: influxdb
+    tag: "2.7-alpine"
+  keycloak:
+    repository: quay.io/keycloak/keycloak
+    tag: "26.2@sha256:4883630ef9db14031cde3e60700c9a9a8eaf1b5c24db1589d6a2d43de38ba2a9"
+  postgres:
+    repository: postgres
+    tag: "16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+  oauth2Proxy:
+    repository: quay.io/oauth2-proxy/oauth2-proxy
+    tag: "v7.8.1@sha256:d62e2d81c6f5048f652f67c302083be1272c181b971fad80e5a30ebe2b8b75d8"
+  redis:
+    repository: redis
+    tag: "7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+  nginx:
+    repository: nginx
+    tag: "alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3"
+  busybox:
+    repository: busybox
+    tag: "1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"

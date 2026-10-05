@@ -1,0 +1,237 @@
+{{- /* Una pipeline PMU (openPDC -> bridge -> Edge) per ogni elemento di edges[].pmu. */ -}}
+{{- $root := . -}}
+{{- $topo := include "smartgrid.topology" . | fromJson -}}
+{{- range $e := $topo.edges }}
+{{- range $p := $e.pipelines }}
+{{- $pdcLabels := dict "root" $root "app" $p.pdc "component" "pmu" "role" "openpdc" "edge" $e.id }}
+{{- $brLabels := dict "root" $root "app" $p.bridge "component" "pmu" "role" "pmu-bridge" "edge" $e.id }}
+---
+# ================================ Pipeline PMU {{ int $p.index }} dell'Edge {{ $e.id }}
+# {{ $p.pdc }} (openPDC, C37.118 :8900) -> {{ $p.bridge }} -> {{ $e.name }} (REST :8084, ess0/SetActivePowerEquals)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $p.pdc }}-config
+  labels:
+    {{- include "smartgrid.labels" $pdcLabels | nindent 4 }}
+  annotations:
+    {{- include "smartgrid.keepPvc" $root | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ $p.pdcStorage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $p.pdc }}
+  labels:
+    {{- include "smartgrid.labels" $pdcLabels | nindent 4 }}
+spec:
+  replicas: 1
+  # Un solo pod alla volta sul database SQLite (PVC ReadWriteOnce).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ $p.pdc }}
+  template:
+    metadata:
+      labels:
+        {{- include "smartgrid.labels" (merge (dict "pod" true) $pdcLabels) | nindent 8 }}
+    spec:
+      initContainers:
+        # Al primo avvio il PVC è vuoto: copia la configurazione di default
+        # dell'immagine (openPDC.db). Poi non tocca più nulla, così le modifiche
+        # fatte dalla UI di openPDC sopravvivono ai riavvii.
+        - name: seed-config
+          {{- include "smartgrid.image" (dict "root" $root "name" "openpdc") | nindent 10 }}
+          command:
+            - sh
+            - -c
+            - |
+              if [ -f /seed/openPDC.db ]; then
+                echo "openPDC.db già presente nel PVC: nessuna copia"
+              else
+                echo "PVC vuoto: copio la configurazione di default"
+                cp -a /opt/openPDC/ConfigurationCache/. /seed/
+              fi
+          volumeMounts:
+            - name: config
+              mountPath: /seed
+      containers:
+        - name: openpdc
+          {{- include "smartgrid.image" (dict "root" $root "name" "openpdc") | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: 8280
+            - name: stream
+              containerPort: 8900
+          resources:
+            {{- toYaml $p.pdcResources | nindent 12 }}
+          # openPDC (Mono) può metterci qualche minuto ad avviarsi su Minikube.
+          startupProbe:
+            tcpSocket:
+              port: 8280
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: 8900
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: 8280
+            periodSeconds: 20
+            failureThreshold: 3
+          volumeMounts:
+            - name: config
+              mountPath: /opt/openPDC/ConfigurationCache
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ $p.pdc }}-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $p.pdc }}
+  labels:
+    {{- include "smartgrid.labels" $pdcLabels | nindent 4 }}
+spec:
+  selector:
+    app: {{ $p.pdc }}
+  ports:
+    - name: http
+      port: 8280
+      targetPort: 8280
+    - name: stream
+      port: 8900
+      targetPort: 8900
+---
+# Stream C37.118 solo dal proprio bridge. UI 8280 chiusa ai pod
+# (si usa con kubectl port-forward, che la policy non blocca).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $p.pdc }}-ingress
+  labels:
+    {{- include "smartgrid.labels" $pdcLabels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $p.pdc }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ $p.bridge }}
+      ports:
+        - protocol: TCP
+          port: 8900
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $p.bridge }}
+  labels:
+    {{- include "smartgrid.labels" $brLabels | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ $p.bridge }}
+  template:
+    metadata:
+      labels:
+        {{- include "smartgrid.labels" (merge (dict "pod" true) $brLabels) | nindent 8 }}
+    spec:
+      initContainers:
+        {{- include "smartgrid.waitFor" (dict "root" $root "name" "wait-pdc" "host" $p.pdc "port" 8900) | nindent 8 }}
+        {{- include "smartgrid.waitFor" (dict "root" $root "name" "wait-edge" "host" $e.name "port" 8084) | nindent 8 }}
+      containers:
+        - name: bridge
+          {{- include "smartgrid.image" (dict "root" $root "name" "pmuBridge") | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            # Collegamenti calcolati dal chart
+            - name: PDC_ID
+              value: {{ int $p.pdcId | quote }}
+            - name: PDC_HOST
+              value: {{ $p.pdc }}
+            - name: PDC_PORT
+              value: "8900"
+            - name: PDC_COMPONENT
+              value: ess0
+            - name: PDC_CHANNEL
+              value: SetActivePowerEquals
+            - name: OPENEMS_BASE
+              value: {{ printf "http://%s:8084" $e.name }}
+            - name: HTTP_PORT
+              value: "8000"
+            {{- include "smartgrid.secretEnv" (dict "root" $root "name" "OPENEMS_USER" "key" "OPENEMS_EDGE_USER") | nindent 12 }}
+            {{- include "smartgrid.secretEnv" (dict "root" $root "name" "OPENEMS_PASS" "key" "OPENEMS_EDGE_PASSWORD") | nindent 12 }}
+            # Parametri (pmuDefaults.bridge.env + override della pipeline)
+            {{- range $k, $v := $p.env }}
+            - name: {{ $k }}
+              value: {{ $v | toString | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml $p.bridgeResources | nindent 12 }}
+          # Solo TCP: /health può segnalare "PDC scollegato"; con un probe HTTP il pod
+          # diventerebbe NotReady proprio quando serve leggerne lo stato.
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $p.bridge }}
+  labels:
+    {{- include "smartgrid.labels" $brLabels | nindent 4 }}
+spec:
+  selector:
+    app: {{ $p.bridge }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+# Stato del bridge solo dal WebProxy (/monitor/edges/{{ $e.id }}/bridges/{{ int $p.index }}/...).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $p.bridge }}-ingress
+  labels:
+    {{- include "smartgrid.labels" $brLabels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $p.bridge }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: webproxy
+      ports:
+        - protocol: TCP
+          port: 8000
+{{- end }}
+{{- end }}

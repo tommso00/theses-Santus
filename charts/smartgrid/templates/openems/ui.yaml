@@ -1,0 +1,99 @@
+{{- $labels := dict "root" $ "app" "openems-ui" "component" "openems" -}}
+{{- $envjs := printf "(function(window) {\n    window[\"env\"] = window[\"env\"] || {};\n    window[\"env\"][\"websocket\"] = \"ws://%s/backend-ws/\";\n})(this);\n" .Values.global.host -}}
+# UI di OpenEMS: si collega al Backend e mostra tutti gli Edge.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openems-ui-env
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+data:
+  env.js: |
+    {{- $envjs | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openems-ui
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openems-ui
+  template:
+    metadata:
+      labels:
+        {{- include "smartgrid.labels" (merge (dict "pod" true) $labels) | nindent 8 }}
+      annotations:
+        checksum/env: {{ $envjs | sha256sum }}
+    spec:
+      containers:
+        - name: openems-ui
+          {{- include "smartgrid.image" (dict "root" $ "name" "openemsUi") | nindent 10 }}
+          env:
+            - name: WEBSOCKET_HOST
+              value: openems-backend
+            - name: WEBSOCKET_PORT
+              value: "8082"
+            - name: UI_WEBSOCKET
+              value: ws://openems-backend:8082/
+          ports:
+            - containerPort: 80
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: env
+              mountPath: /var/www/html/openems/assets/env.js
+              subPath: env.js
+              readOnly: true
+      volumes:
+        - name: env
+          configMap:
+            name: openems-ui-env
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openems-ui
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  selector:
+    app: openems-ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openems-ui-ingress
+  labels:
+    {{- include "smartgrid.labels" $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: openems-ui
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: webproxy
+      ports:
+        - protocol: TCP
+          port: 80

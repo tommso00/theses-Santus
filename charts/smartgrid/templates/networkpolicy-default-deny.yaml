@@ -1,0 +1,15 @@
+# Default deny in ingresso per tutto il namespace: nessun pod riceve traffico da
+# altri pod finché una NetworkPolicy non lo permette. Le regole "allow" stanno
+# nello stesso file di ogni servizio.
+# Non interessati: probe del kubelet, kubectl port-forward/exec.
+# Il traffico in USCITA non è limitato (DNS, Edge -> Backend, ...).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels:
+    {{- include "smartgrid.labels" (dict "root" $ "app" "default-deny" "component" "network") | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
