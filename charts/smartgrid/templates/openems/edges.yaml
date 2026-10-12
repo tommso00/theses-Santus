@@ -3,18 +3,22 @@
 {{- $topo := include "smartgrid.topology" . | fromJson -}}
 {{- $script := .Files.Get "files/edge-config-init.sh" -}}
 # Script comune a tutti gli Edge: scrive nel PVC la configurazione gestita dal chart.
+{{- range $e := $topo.edges }}
+{{- $edgeNs := include "smartgrid.edgeNamespace" (dict "root" $root "id" $e.id) -}}
+{{- $labels := dict "root" $root "app" $e.name "component" "openems" "role" "openems-edge" "edge" $e.id }}
+{{- $config := include "smartgrid.edgeConfig" (dict "root" $root "edge" $e) }}
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: openems-edge-init
+  namespace: {{ $edgeNs }}
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" (dict "root" $root "app" "openems-edge" "component" "openems") | nindent 4 }}
 data:
   config-init.sh: |
     {{- $script | nindent 4 }}
-{{- range $e := $topo.edges }}
-{{- $labels := dict "root" $root "app" $e.name "component" "openems" "role" "openems-edge" "edge" $e.id }}
-{{- $config := include "smartgrid.edgeConfig" (dict "root" $root "edge" $e) }}
 ---
 # ========================================================== Edge {{ $e.id }}
 # {{ $e.comment }}
@@ -22,6 +26,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ $e.name }}-config
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $labels | nindent 4 }}
 data:
@@ -31,6 +36,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ $e.name }}-conf
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $labels | nindent 4 }}
   annotations:
@@ -45,6 +51,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ $e.name }}-data
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $labels | nindent 4 }}
   annotations:
@@ -59,6 +66,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ $e.name }}
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $labels | nindent 4 }}
 spec:
@@ -137,6 +145,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ $e.name }}
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $labels | nindent 4 }}
 spec:
@@ -156,6 +165,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ $e.name }}-ingress
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $labels | nindent 4 }}
 spec:
@@ -173,7 +183,10 @@ spec:
         - protocol: TCP
           port: 8084
     - from:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $root.Release.Namespace }}
+          podSelector:
             matchLabels:
               app: webproxy
       ports:

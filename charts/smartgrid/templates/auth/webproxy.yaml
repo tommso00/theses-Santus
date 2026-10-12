@@ -44,8 +44,12 @@ spec:
               SERVICES=$(grep -oE 'server +[a-z0-9.-]+:[0-9]+' /etc/nginx/nginx.conf \
                 | sed -E 's/server +//; s/:[0-9]+$//' | sort -u)
               for svc in $SERVICES; do
-                until nslookup "$svc.{{ .Release.Namespace }}.svc.cluster.local" >/dev/null 2>&1; do
-                  echo "attendo DNS per $svc..."; sleep 2
+                case "$svc" in
+                  *.*) host="$svc" ;;
+                  *)   host="$svc.{{ .Release.Namespace }}.svc.cluster.local" ;;
+                esac
+                until nslookup "$host" >/dev/null 2>&1; do
+                  echo "attendo DNS per $host..."; sleep 2
                 done
               done
               echo "DNS pronto per:" $SERVICES

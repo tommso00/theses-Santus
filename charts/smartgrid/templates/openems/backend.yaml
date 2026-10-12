@@ -1,4 +1,6 @@
 {{- $labels := dict "root" $ "app" "openems-backend" "component" "openems" -}}
+{{- $topo := include "smartgrid.topology" . | fromJson -}}
+{{- $b2b := .Values.backend.b2bRest -}}
 {{- $b2b := .Values.backend.b2bRest -}}
 {{- /* Configurazione OSGi del Backend: un unico punto che aggrega tutti gli Edge. */ -}}
 {{- $config := include "smartgrid.backendConfig" . -}}
@@ -175,9 +177,15 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        - podSelector:
+        {{- range $e := $topo.edges }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "smartgrid.edgeNamespace" (dict "root" $ "id" $e.id) }}
+          podSelector:
             matchLabels:
               smartgrid.io/role: openems-edge
+              smartgrid.io/edge: {{ $e.id }}
+        {{- end }}
       ports:
         - protocol: TCP
           port: 8081

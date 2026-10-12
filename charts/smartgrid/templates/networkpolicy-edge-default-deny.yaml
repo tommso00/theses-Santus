@@ -1,0 +1,16 @@
+{{- $root := . -}}
+{{- $topo := include "smartgrid.topology" . | fromJson -}}
+{{- range $e := $topo.edges }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: {{ include "smartgrid.edgeNamespace" (dict "root" $root "id" $e.id) }}
+  labels:
+    {{- include "smartgrid.labels" (dict "root" $root "app" "default-deny" "component" "network" "edge" $e.id) | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+{{- end }}
