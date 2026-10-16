@@ -28,7 +28,7 @@
 edges:
   - id: edge0
     comment: Edge 0 - simulatore
-    pmu: 6
+    pmu: 2
 
   - id: edge1
     comment: Edge 1 - simulatore
@@ -41,10 +41,7 @@ edges:
       - bridge:
           env:
             PUBLISH_PHASOR_INDEX: "2"
-      - {}
-      - {}
-      - {}
-      - {}
+
 
 # Valori comuni a tutti gli Edge.
 edgeDefaults:
