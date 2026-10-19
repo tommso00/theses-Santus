@@ -36,6 +36,9 @@ spec:
       labels:
         {{- include "smartgrid.labels" (merge (dict "pod" true) $labels) | nindent 8 }}
     spec:
+      # Fix misconfig 1: identità dedicata per componente, senza token montato.
+      serviceAccountName: smartgrid-timedata
+      automountServiceAccountToken: false
       containers:
         - name: influxdb
           {{- include "smartgrid.image" (dict "root" $ "name" "influxdb") | nindent 10 }}

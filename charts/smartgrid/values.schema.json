@@ -392,8 +392,11 @@
           "minLength": 1
         },
         "existingSecret": {
+          "description": "Fix misconfig 3: nome del Secret vincolato ai soli valori attesi, non un nome libero sovrascrivibile con --set.",
           "type": "string",
-          "minLength": 1
+          "enum": [
+            "auth-secrets"
+          ]
         }
       }
     },

@@ -31,6 +31,9 @@ spec:
         # Nuova configurazione (es. Edge aggiunti) -> nuovo pod.
         checksum/nginx: {{ $nginx | sha256sum }}
     spec:
+      # Fix misconfig 1: identità dedicata per componente, senza token montato.
+      serviceAccountName: smartgrid-auth
+      automountServiceAccountToken: false
       # Nginx risolve gli upstream solo all'avvio: se il DNS non è pronto (subito
       # dopo "minikube start") esce con "host not found in upstream". Aspetta
       # tutti i Service usati in nginx.conf, ricavati dal file stesso.

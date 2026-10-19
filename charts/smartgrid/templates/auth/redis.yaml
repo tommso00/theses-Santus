@@ -16,6 +16,9 @@ spec:
       labels:
         {{- include "smartgrid.labels" (merge (dict "pod" true) $labels) | nindent 8 }}
     spec:
+      # Fix misconfig 1: identità dedicata per componente, senza token montato.
+      serviceAccountName: smartgrid-auth
+      automountServiceAccountToken: false
       containers:
         - name: redis
           {{- include "smartgrid.image" (dict "root" $ "name" "redis") | nindent 10 }}

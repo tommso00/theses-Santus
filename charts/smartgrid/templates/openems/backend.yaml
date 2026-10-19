@@ -68,6 +68,9 @@ spec:
         # Edge aggiunti/tolti o storico attivato -> il Backend riparte da solo.
         checksum/config: {{ printf "%s%s" $config (.Files.Get "files/backend-config-init.sh") | sha256sum }}
     spec:
+      # Fix misconfig 1: identità dedicata per componente, senza token montato.
+      serviceAccountName: smartgrid-openems
+      automountServiceAccountToken: false
       initContainers:
         - name: config-init
           {{- include "smartgrid.image" (dict "root" $ "name" "busybox") | nindent 10 }}

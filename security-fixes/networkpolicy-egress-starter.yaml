@@ -1,0 +1,43 @@
+# Fix misconfig 1 (STRIDE riga 4) - difesa in profondità, livello cluster.
+#
+# ATTENZIONE: punto di partenza, NON applicare alla cieca. Una volta che un pod
+# ha una policy di tipo Egress, TUTTO il traffico in uscita non esplicitamente
+# permesso viene bloccato: regole incomplete rompono l'applicazione. Testare su
+# un pod alla volta (es. prima solo openems-ui) prima di estendere.
+#
+# Obiettivo: tagliare la rotta pod -> API server (così un token eventualmente
+# rubato è inutilizzabile dall'interno del pod), permettendo DNS e il traffico
+# interno di cui lo stack ha bisogno. Nel branch misconfig-fixed il token non è
+# più montato, quindi questa è una difesa aggiuntiva, non la principale.
+#
+# Questo starter nega l'uscita per default e permette solo DNS e il traffico
+# verso gli altri pod del namespace. Va completato con le destinazioni esterne
+# effettivamente necessarie (es. pull di immagini via kubelet NON passa da qui,
+# ma webhook/OIDC esterni sì) e lasciando fuori la subnet dell'API server.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: smartgrid
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS (kube-dns/CoreDNS nel cluster)
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Traffico interno al namespace (Edge->Backend, bridge->openPDC, ->InfluxDB,
+    # ->Keycloak->Postgres, ->Redis). NON include l'API server, che sta altrove.
+    - to:
+        - podSelector: {}
+# NOTA: l'API server (kubernetes.default.svc, di norma in kube-system/default)
+# non è tra le destinazioni permesse qui: è esattamente ciò che vogliamo negare.
+# Se qualche componente dovesse legittimamente usarlo, aggiungere una regola
+# mirata invece di aprire tutto kube-system.

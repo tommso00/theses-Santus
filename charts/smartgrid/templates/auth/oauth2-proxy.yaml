@@ -19,6 +19,9 @@ spec:
       labels:
         {{- include "smartgrid.labels" (merge (dict "pod" true) $labels) | nindent 8 }}
     spec:
+      # Fix misconfig 1: identità dedicata per componente, senza token montato.
+      serviceAccountName: smartgrid-auth
+      automountServiceAccountToken: false
       # Dopo un riavvio di Minikube partiva prima di Redis e usciva con errore.
       initContainers:
         {{- include "smartgrid.waitFor" (dict "root" $ "name" "wait-redis" "host" "redis" "port" 6379) | nindent 8 }}

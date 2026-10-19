@@ -1,0 +1,48 @@
+{{/* =========================================================================
+     Fix misconfig 2 (STRIDE riga 8), parte esprimibile nel chart - confinamento
+     delle risorse del namespace.
+
+     La separazione workload/control plane (taint, nodeAffinity, admission) è
+     cluster-level e non può stare nel chart senza rompere un Minikube a nodo
+     singolo: vedi security-fixes/ nella radice del repo. Qui il chart aggiunge
+     ciò che confina i consumi DENTRO il namespace, così un errore di
+     dimensionamento o un carico ostile non prevale sui componenti di sistema.
+
+     - LimitRange: default di richieste/limiti per i container che non li
+       dichiarano (tutti i pod del chart li dichiarano già: è una rete di
+       sicurezza per aggiunte future). Sempre attivo, non blocca nulla.
+     - ResourceQuota: tetto complessivo del namespace. Disattivata di default
+       perché va dimensionata sul proprio cluster: attivarla con
+       resourceQuota.enabled=true dopo aver verificato i valori.
+     ========================================================================= */}}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: smartgrid-limits
+  labels:
+    {{- include "smartgrid.labels" (dict "root" $ "app" "smartgrid-limits" "component" "governance") | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      default:
+        cpu: 500m
+        memory: 512Mi
+{{- if and .Values.resourceQuota .Values.resourceQuota.enabled }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: smartgrid-quota
+  labels:
+    {{- include "smartgrid.labels" (dict "root" $ "app" "smartgrid-quota" "component" "governance") | nindent 4 }}
+spec:
+  hard:
+    requests.cpu: {{ .Values.resourceQuota.requestsCpu | default "4" | quote }}
+    requests.memory: {{ .Values.resourceQuota.requestsMemory | default "8Gi" | quote }}
+    limits.cpu: {{ .Values.resourceQuota.limitsCpu | default "8" | quote }}
+    limits.memory: {{ .Values.resourceQuota.limitsMemory | default "12Gi" | quote }}
+    pods: {{ .Values.resourceQuota.pods | default "50" | quote }}
+{{- end }}

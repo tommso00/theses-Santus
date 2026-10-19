@@ -41,6 +41,9 @@ spec:
       labels:
         {{- include "smartgrid.labels" (merge (dict "pod" true) $pdcLabels) | nindent 8 }}
     spec:
+      # Fix misconfig 1: identità dedicata per componente, senza token montato.
+      serviceAccountName: smartgrid-pmu
+      automountServiceAccountToken: false
       initContainers:
         # Al primo avvio il PVC è vuoto: copia la configurazione di default
         # dell'immagine (openPDC.db). Poi non tocca più nulla, così le modifiche
@@ -151,6 +154,9 @@ spec:
       labels:
         {{- include "smartgrid.labels" (merge (dict "pod" true) $brLabels) | nindent 8 }}
     spec:
+      # Fix misconfig 1: identità dedicata per componente, senza token montato.
+      serviceAccountName: smartgrid-pmu
+      automountServiceAccountToken: false
       initContainers:
         {{- include "smartgrid.waitFor" (dict "root" $root "name" "wait-pdc" "host" $p.pdc "port" 8900) | nindent 8 }}
         {{- include "smartgrid.waitFor" (dict "root" $root "name" "wait-edge" "host" $e.name "port" 8084) | nindent 8 }}

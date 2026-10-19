@@ -1,0 +1,45 @@
+# Fix misconfig 2 (STRIDE riga 8) - livello cluster, non esprimibile nel chart.
+#
+# Rifiuta la creazione di pod applicativi che tollerano o selezionano il nodo
+# del control plane. Da sola non basta: va accompagnata dal taint sul nodo
+# (vedi README di security-fixes/). Insieme, taint + policy impediscono la
+# co-locazione anche a chi aggiunge una toleration.
+#
+# Applicare con:  kubectl apply -f validatingadmissionpolicy-no-controlplane.yaml
+# API nativa, GA da Kubernetes 1.30. Per versioni precedenti usare Kyverno o
+# Gatekeeper con una regola equivalente.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: smartgrid-no-controlplane
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  validations:
+    - expression: >-
+        !has(object.spec.tolerations) ||
+        !object.spec.tolerations.exists(t,
+          (has(t.key) && t.key == 'node-role.kubernetes.io/control-plane') ||
+          (!has(t.key) && has(t.operator) && t.operator == 'Exists'))
+      message: "i pod applicativi non possono tollerare il taint del control plane"
+    - expression: >-
+        !has(object.spec.nodeSelector) ||
+        !('node-role.kubernetes.io/control-plane' in object.spec.nodeSelector)
+      message: "i pod applicativi non possono chiedere il nodo del control plane"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: smartgrid-no-controlplane
+spec:
+  policyName: smartgrid-no-controlplane
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: smartgrid

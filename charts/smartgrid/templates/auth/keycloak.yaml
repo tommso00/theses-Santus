@@ -33,6 +33,9 @@ spec:
       annotations:
         checksum/realm: {{ $realm | sha256sum }}
     spec:
+      # Fix misconfig 1: identità dedicata per componente, senza token montato.
+      serviceAccountName: smartgrid-auth
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       initContainers:
         {{- include "smartgrid.waitFor" (dict "root" $ "name" "wait-db" "host" "keycloak-db" "port" 5432) | nindent 8 }}

@@ -29,6 +29,9 @@ spec:
       annotations:
         checksum/env: {{ $envjs | sha256sum }}
     spec:
+      # Fix misconfig 1: identità dedicata per componente, senza token montato.
+      serviceAccountName: smartgrid-openems
+      automountServiceAccountToken: false
       containers:
         - name: openems-ui
           {{- include "smartgrid.image" (dict "root" $ "name" "openemsUi") | nindent 10 }}

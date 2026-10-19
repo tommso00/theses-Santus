@@ -184,6 +184,19 @@ webproxy:
     limits: { cpu: 200m, memory: 128Mi }
 
 # -----------------------------------------------------------------------------
+# Fix misconfig 2 (confinamento risorse del namespace). La LimitRange è sempre
+# attiva; la ResourceQuota è un tetto complessivo da dimensionare sul proprio
+# cluster: attivarla solo dopo aver verificato che i valori bastino allo stack.
+# -----------------------------------------------------------------------------
+resourceQuota:
+  enabled: false
+  requestsCpu: "4"
+  requestsMemory: 8Gi
+  limitsCpu: "8"
+  limitsMemory: 12Gi
+  pods: "50"
+
+# -----------------------------------------------------------------------------
 # Immagini: fissate per digest (conta il digest, il tag è solo un'etichetta).
 # Per aggiornarne una:
 #   docker pull <immagine>:<tag>
