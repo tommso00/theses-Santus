@@ -5,8 +5,9 @@
 #
 # MODELLO DI ATTACCANTE (vedi security-demos/README.md)
 #   - OUTSIDER: nessuna credenziale Kubernetes, nessun accesso al cluster.
-#     Parte dalla rete e dalle sole superfici esposte (il bridge PMU / openPDC
-#     e' il pod piu' esposto; riceve dati di misura dall'esterno).
+#     Parte dalla rete e dalla sola superficie esposta: il reverse proxy
+#     'webproxy', unico pod raggiungibile dall'esterno (via l'Ingress). Dietro
+#     di esso la prima superficie pre-login e' l'autenticazione (Keycloak/OAuth2).
 #   - ZERO-KNOWLEDGE: non sa se le misconfigurazioni ci sono. Le SCOPRE
 #     sondando e osservando le risposte. Non assume nulla.
 #   - PRIVILEGI MINIMI: a ogni passo usa SOLO cio' che ha verificato di avere.
@@ -135,8 +136,10 @@ echo "di riproduzione sono descritti in security-demos/README.md."
 # -----------------------------------------------------------------------------
 # 0. Foothold: il pod esposto da cui l'attaccante esegue codice
 # -----------------------------------------------------------------------------
-POD="$(kubectl get pods -n "$NS" -l smartgrid.io/role=openpdc -o name 2>/dev/null | head -n1)"
-[ -n "$POD" ] || POD="$(kubectl get pods -n "$NS" -l smartgrid.io/role=pmu-bridge -o name 2>/dev/null | head -n1)"
+# Il webproxy (reverse proxy) e' l'unico pod esposto all'esterno (via Ingress):
+# e' il foothold realistico per un outsider. Fallback: openPDC, poi primo pod.
+POD="$(kubectl get pods -n "$NS" -l app=webproxy -o name 2>/dev/null | head -n1)"
+[ -n "$POD" ] || POD="$(kubectl get pods -n "$NS" -l smartgrid.io/role=openpdc -o name 2>/dev/null | head -n1)"
 [ -n "$POD" ] || POD="$(kubectl get pods -n "$NS" -o name | head -n1)"
 [ -n "$POD" ] || { echo "nessun pod nel namespace '$NS'"; exit 1; }
 POD="${POD#pod/}"
