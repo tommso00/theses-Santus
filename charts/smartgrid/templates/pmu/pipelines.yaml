@@ -2,6 +2,7 @@
 {{- $root := . -}}
 {{- $topo := include "smartgrid.topology" . | fromJson -}}
 {{- range $e := $topo.edges }}
+{{- $edgeNs := include "smartgrid.edgeNamespace" (dict "root" $root "id" $e.id) -}}
 {{- range $p := $e.pipelines }}
 {{- $pdcLabels := dict "root" $root "app" $p.pdc "component" "pmu" "role" "openpdc" "edge" $e.id }}
 {{- $brLabels := dict "root" $root "app" $p.bridge "component" "pmu" "role" "pmu-bridge" "edge" $e.id }}
@@ -12,6 +13,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ $p.pdc }}-config
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $pdcLabels | nindent 4 }}
   annotations:
@@ -26,6 +28,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ $p.pdc }}
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $pdcLabels | nindent 4 }}
 spec:
@@ -98,6 +101,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ $p.pdc }}
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $pdcLabels | nindent 4 }}
 spec:
@@ -117,6 +121,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ $p.pdc }}-ingress
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $pdcLabels | nindent 4 }}
 spec:
@@ -137,6 +142,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ $p.bridge }}
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $brLabels | nindent 4 }}
 spec:
@@ -203,6 +209,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ $p.bridge }}
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $brLabels | nindent 4 }}
 spec:
@@ -218,6 +225,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ $p.bridge }}-ingress
+  namespace: {{ $edgeNs }}
   labels:
     {{- include "smartgrid.labels" $brLabels | nindent 4 }}
 spec:
@@ -226,8 +234,12 @@ spec:
       app: {{ $p.bridge }}
   policyTypes: [Ingress]
   ingress:
+  ingress:
     - from:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $root.Release.Namespace }}
+          podSelector:
             matchLabels:
               app: webproxy
       ports:

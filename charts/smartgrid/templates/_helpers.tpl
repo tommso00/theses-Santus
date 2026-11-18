@@ -132,7 +132,7 @@ Parametri: (dict "root" $ "edge" <Edge della topologia>)
 {{- $timeout := int .root.Values.edgeDefaults.apiTimeout -}}
 backend0.config: |
   enabled=B"true"
-  uri="ws://openems-backend:8081"
+  uri="ws://openems-backend.{{ .root.Release.Namespace }}.svc.cluster.local:8081"
   apikey="{{ $e.apikey }}"
   apiTimeout=I"{{ $timeout }}"
   id="ctrlBackend0"
@@ -315,3 +315,11 @@ Uso: F"{{ include "smartgrid.floatBits" 10000 }}"  ->  F"1176256512"
 {{- add (mul (add 127 $e) 8388608) (mul (sub $n $p) $scale) -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+Namespace containing one Edge and all of its PMU pipelines.
+Example: release namespace smartgrid + edge0 = smartgrid-edge0.
+*/}}
+{{- define "smartgrid.edgeNamespace" -}}
+{{- printf "%s-%s" .root.Release.Namespace .id -}}
+{{- end -}}
